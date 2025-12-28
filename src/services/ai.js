@@ -1,15 +1,40 @@
 import Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import dotenv from 'dotenv';
 import * as db from '../db/index.js';
 
+// Load environment variables first
+dotenv.config();
+
 // ============================================================================
-// AI CLIENTS
+// AI CLIENTS (lazy initialization)
 // ============================================================================
 
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-const genai = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+let anthropic = null;
+let openai = null;
+let genai = null;
+
+function getAnthropicClient() {
+  if (!anthropic && process.env.ANTHROPIC_API_KEY) {
+    anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  }
+  return anthropic;
+}
+
+function getOpenAIClient() {
+  if (!openai && process.env.OPENAI_API_KEY) {
+    openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  }
+  return openai;
+}
+
+function getGeminiClient() {
+  if (!genai && process.env.GEMINI_API_KEY) {
+    genai = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+  }
+  return genai;
+}
 
 // Cost rates per 1M tokens
 const COST_RATES = {
@@ -68,8 +93,12 @@ RESPONSES:
 
 export async function askClaude(content, systemPrompt = PROMPTS.general) {
   const startTime = Date.now();
+  const client = getAnthropicClient();
+  if (!client) {
+    return { provider: 'claude', error: 'ANTHROPIC_API_KEY not configured', latencyMs: 0, success: false };
+  }
   try {
-    const response = await anthropic.messages.create({
+    const response = await client.messages.create({
       model: 'claude-sonnet-4-20250514',
       max_tokens: 2048,
       messages: [{ role: 'user', content: systemPrompt + content }],
@@ -104,8 +133,12 @@ export async function askClaude(content, systemPrompt = PROMPTS.general) {
 
 export async function askGPT(content, systemPrompt = PROMPTS.general) {
   const startTime = Date.now();
+  const client = getOpenAIClient();
+  if (!client) {
+    return { provider: 'gpt', error: 'OPENAI_API_KEY not configured', latencyMs: 0, success: false };
+  }
   try {
-    const response = await openai.chat.completions.create({
+    const response = await client.chat.completions.create({
       model: 'gpt-4o',
       max_tokens: 2048,
       messages: [{ role: 'user', content: systemPrompt + content }],
@@ -140,8 +173,12 @@ export async function askGPT(content, systemPrompt = PROMPTS.general) {
 
 export async function askGemini(content, systemPrompt = PROMPTS.general) {
   const startTime = Date.now();
+  const client = getGeminiClient();
+  if (!client) {
+    return { provider: 'gemini', error: 'GEMINI_API_KEY not configured', latencyMs: 0, success: false };
+  }
   try {
-    const model = genai.getGenerativeModel({ model: 'gemini-2.0-flash' });
+    const model = client.getGenerativeModel({ model: 'gemini-2.0-flash' });
     const result = await model.generateContent(systemPrompt + content);
 
     const usageMetadata = result.response.usageMetadata || {};

@@ -1,13 +1,13 @@
+import dotenv from 'dotenv';
+dotenv.config(); // Load env first
+
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
-import dotenv from 'dotenv';
 import { v4 as uuidv4 } from 'uuid';
 
 import * as db from './db/index.js';
 import * as ai from './services/ai.js';
-
-dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
