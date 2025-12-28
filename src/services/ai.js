@@ -109,8 +109,8 @@ export async function askClaude(content, systemPrompt = PROMPTS.general) {
     const costUsd = calculateCost('claude', tokensIn, tokensOut);
     const latencyMs = Date.now() - startTime;
 
-    // Log to database
-    await db.logUsage('claude', tokensIn, tokensOut, costUsd, 'messages.create');
+    // Log to database (optional - don't fail if DB unavailable)
+    try { await db.logUsage('claude', tokensIn, tokensOut, costUsd, 'messages.create'); } catch(e) {}
 
     return {
       provider: 'claude',
@@ -149,8 +149,8 @@ export async function askGPT(content, systemPrompt = PROMPTS.general) {
     const costUsd = calculateCost('gpt', tokensIn, tokensOut);
     const latencyMs = Date.now() - startTime;
 
-    // Log to database
-    await db.logUsage('gpt', tokensIn, tokensOut, costUsd, 'chat.completions');
+    // Log to database (optional - don't fail if DB unavailable)
+    try { await db.logUsage('gpt', tokensIn, tokensOut, costUsd, 'chat.completions'); } catch(e) {}
 
     return {
       provider: 'gpt',
@@ -187,8 +187,8 @@ export async function askGemini(content, systemPrompt = PROMPTS.general) {
     const costUsd = calculateCost('gemini', tokensIn, tokensOut);
     const latencyMs = Date.now() - startTime;
 
-    // Log to database
-    await db.logUsage('gemini', tokensIn, tokensOut, costUsd, 'generateContent');
+    // Log to database (optional - don't fail if DB unavailable)
+    try { await db.logUsage('gemini', tokensIn, tokensOut, costUsd, 'generateContent'); } catch(e) {}
 
     return {
       provider: 'gemini',
