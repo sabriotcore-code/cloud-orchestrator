@@ -621,6 +621,98 @@ Keep the explanation practical and actionable.`;
 }
 
 // ============================================================================
+// #6 & #14: TOOL CHAINING & PARALLEL EXECUTION
+// ============================================================================
+
+// Execute multiple actions in parallel or sequence
+async function executeActionChain(actions, userId) {
+  const results = [];
+
+  // Separate into parallel-safe and sequential actions
+  const parallelSafe = actions.filter(a => ['READ', 'FILES', 'SEARCH', 'WEB_SEARCH'].includes(a.action));
+  const sequential = actions.filter(a => !['READ', 'FILES', 'SEARCH', 'WEB_SEARCH'].includes(a.action));
+
+  // Execute parallel-safe actions concurrently (#14)
+  if (parallelSafe.length > 0) {
+    const parallelResults = await Promise.allSettled(
+      parallelSafe.map(action => executeSingleAction(action, userId))
+    );
+    for (let i = 0; i < parallelResults.length; i++) {
+      const result = parallelResults[i];
+      results.push({
+        action: parallelSafe[i].action,
+        success: result.status === 'fulfilled',
+        result: result.status === 'fulfilled' ? result.value : result.reason?.message
+      });
+    }
+  }
+
+  // Execute sequential actions one by one
+  for (const action of sequential) {
+    try {
+      const result = await executeSingleAction(action, userId);
+      results.push({ action: action.action, success: true, result });
+    } catch (e) {
+      results.push({ action: action.action, success: false, result: e.message });
+    }
+  }
+
+  return results;
+}
+
+// Execute a single action
+async function executeSingleAction(action, userId) {
+  switch (action.action) {
+    case 'READ':
+      return await github.readFile(
+        action.params.owner || 'sabriotcore-code',
+        action.params.repo,
+        action.params.path
+      );
+    case 'FILES':
+      return await github.listFiles(
+        action.params.owner || 'sabriotcore-code',
+        action.params.repo,
+        action.params.path || ''
+      );
+    case 'SEARCH':
+      return await github.searchCode(action.params.query);
+    case 'WEB_SEARCH':
+      return await web.search(action.params.query);
+    case 'COMMIT_FILE':
+      const existing = await github.readFile(
+        action.params.owner || 'sabriotcore-code',
+        action.params.repo,
+        action.params.path
+      ).catch(() => null);
+      return await github.createOrUpdateFile(
+        action.params.owner || 'sabriotcore-code',
+        action.params.repo,
+        action.params.path,
+        action.params.content,
+        action.params.message || 'Update via bot',
+        existing?.sha
+      );
+    default:
+      throw new Error(`Unknown action: ${action.action}`);
+  }
+}
+
+// Detect if query needs multiple actions (#6)
+function detectMultipleActions(query) {
+  const chainKeywords = [' and ', ' then ', ' also ', ', then ', ' after that '];
+  const hasChain = chainKeywords.some(k => query.toLowerCase().includes(k));
+
+  if (!hasChain) return null;
+
+  // Split and identify sub-tasks
+  const parts = query.split(/\s+(?:and|then|also)\s+/i).filter(p => p.trim());
+  if (parts.length <= 1) return null;
+
+  return parts;
+}
+
+// ============================================================================
 // #5: ERROR RECOVERY HELPER
 // ============================================================================
 
@@ -1430,6 +1522,179 @@ Return JSON:
     return { master: { response: `❌ Error: ${error.message}` }};
   }
 }
+
+// ============================================================================
+// #8: GITHUB WEBHOOKS - Real-time event notifications
+// ============================================================================
+
+app.post('/webhooks/github', express.json(), async (req, res) => {
+  const event = req.headers['x-github-event'];
+  const payload = req.body;
+
+  console.log(`[Webhook] GitHub event: ${event}`);
+
+  try {
+    let notification = null;
+
+    switch (event) {
+      case 'push':
+        const commits = payload.commits?.length || 0;
+        const branch = payload.ref?.replace('refs/heads/', '') || 'unknown';
+        notification = `🔔 *Push to ${payload.repository?.name}*\n` +
+          `Branch: ${branch}\n` +
+          `Commits: ${commits}\n` +
+          `By: ${payload.pusher?.name || 'unknown'}`;
+        break;
+
+      case 'pull_request':
+        notification = `🔔 *PR ${payload.action}: ${payload.pull_request?.title}*\n` +
+          `Repo: ${payload.repository?.name}\n` +
+          `By: ${payload.pull_request?.user?.login}`;
+        break;
+
+      case 'issues':
+        notification = `🔔 *Issue ${payload.action}: ${payload.issue?.title}*\n` +
+          `Repo: ${payload.repository?.name}\n` +
+          `By: ${payload.issue?.user?.login}`;
+        break;
+
+      case 'workflow_run':
+        const status = payload.workflow_run?.conclusion || payload.workflow_run?.status;
+        notification = `🔔 *Workflow ${status}: ${payload.workflow_run?.name}*\n` +
+          `Repo: ${payload.repository?.name}`;
+        break;
+    }
+
+    if (notification) {
+      // Store notification for retrieval
+      await memory.store(`webhook_${Date.now()}`, notification, 'webhooks');
+
+      // TODO: Send to Slack channel if configured
+      console.log('[Webhook] Notification:', notification);
+    }
+
+    res.status(200).json({ received: true, event });
+  } catch (error) {
+    console.error('[Webhook] Error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get recent webhook notifications
+app.get('/webhooks/recent', async (req, res) => {
+  try {
+    const webhooks = await memory.retrieveCategory('webhooks');
+    res.json({ notifications: webhooks.values || {} });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================================================
+// #9: BUILD/DEPLOY STATUS - Monitor Railway/Netlify
+// ============================================================================
+
+app.get('/deploy/status', async (req, res) => {
+  try {
+    const status = {
+      railway: {
+        url: 'https://web-production-bdfb4.up.railway.app',
+        uptime: process.uptime(),
+        healthy: true
+      },
+      netlify: {
+        url: 'https://rei-dashboard-15rrr.netlify.app',
+        status: 'unknown' // Would need Netlify API key to check
+      }
+    };
+
+    // Check if Railway is responding
+    try {
+      const selfCheck = await fetch(`${status.railway.url}/health`);
+      status.railway.healthy = selfCheck.ok;
+    } catch (e) {
+      status.railway.healthy = false;
+    }
+
+    res.json(status);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================================================
+// #10: SCHEDULED TASKS - Cron-like functionality
+// ============================================================================
+
+const scheduledTasks = new Map();
+
+// Register a scheduled task
+app.post('/tasks/schedule', async (req, res) => {
+  const { name, action, interval, params } = req.body;
+
+  if (!name || !action || !interval) {
+    return res.status(400).json({ error: 'name, action, and interval are required' });
+  }
+
+  // Clear existing task with same name
+  if (scheduledTasks.has(name)) {
+    clearInterval(scheduledTasks.get(name).timer);
+  }
+
+  // Parse interval (e.g., "5m", "1h", "24h")
+  const match = interval.match(/^(\d+)(m|h|d)$/);
+  if (!match) {
+    return res.status(400).json({ error: 'interval must be like "5m", "1h", "24h"' });
+  }
+
+  const [, num, unit] = match;
+  const ms = parseInt(num) * (unit === 'm' ? 60000 : unit === 'h' ? 3600000 : 86400000);
+
+  // Create the scheduled task
+  const timer = setInterval(async () => {
+    console.log(`[Scheduled] Running: ${name}`);
+    try {
+      await handleMasterCommand(action, 'scheduler');
+    } catch (e) {
+      console.error(`[Scheduled] Error in ${name}:`, e.message);
+    }
+  }, ms);
+
+  scheduledTasks.set(name, { action, interval, params, timer, createdAt: new Date() });
+
+  // Also store in DB for persistence
+  await memory.store(`schedule_${name}`, JSON.stringify({ action, interval, params }), 'schedules');
+
+  res.json({ success: true, name, interval, nextRun: new Date(Date.now() + ms) });
+});
+
+// List scheduled tasks
+app.get('/tasks/schedule', async (req, res) => {
+  const tasks = [];
+  for (const [name, task] of scheduledTasks) {
+    tasks.push({
+      name,
+      action: task.action,
+      interval: task.interval,
+      createdAt: task.createdAt
+    });
+  }
+  res.json({ tasks });
+});
+
+// Delete a scheduled task
+app.delete('/tasks/schedule/:name', async (req, res) => {
+  const { name } = req.params;
+
+  if (scheduledTasks.has(name)) {
+    clearInterval(scheduledTasks.get(name).timer);
+    scheduledTasks.delete(name);
+    await memory.store(`schedule_${name}`, '', 'schedules');
+    res.json({ success: true, deleted: name });
+  } else {
+    res.status(404).json({ error: 'Task not found' });
+  }
+});
 
 // ============================================================================
 // SLACK INTEGRATION
