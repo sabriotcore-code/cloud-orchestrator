@@ -1911,7 +1911,8 @@ app.delete('/tasks/schedule/:name', async (req, res) => {
 // ============================================================================
 
 // Initialize Slack if credentials are provided
-initSlack(app);
+// Pass handleMasterCommand for routing @mentions, DMs, reactions, and buttons
+initSlack(app, handleMasterCommand);
 
 // Slack events endpoint
 app.post('/slack/events', async (req, res) => {
