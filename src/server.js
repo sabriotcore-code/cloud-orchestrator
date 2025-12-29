@@ -15,6 +15,15 @@ import * as memory from './services/memory.js';
 import * as context from './services/context.js';
 import * as changelog from './services/changelog.js';
 import { initSlack, slackApp } from './services/slack.js';
+import {
+  usernameToId,
+  extractJson,
+  splitForSlack,
+  isRiskyFile,
+  truncate,
+  withRetry,
+  checkRateLimit
+} from './utils/helpers.js';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -777,30 +786,22 @@ function detectMultipleActions(query) {
 }
 
 // ============================================================================
-// #5: ERROR RECOVERY HELPER
+// #5: ERROR RECOVERY - Using imported withRetry from helpers.js
 // ============================================================================
-
-async function withRetry(fn, maxRetries = 3, delayMs = 1000) {
-  let lastError;
-  for (let i = 0; i < maxRetries; i++) {
-    try {
-      return await fn();
-    } catch (error) {
-      lastError = error;
-      console.log(`[Retry] Attempt ${i + 1} failed: ${error.message}`);
-      if (i < maxRetries - 1) {
-        await new Promise(resolve => setTimeout(resolve, delayMs * (i + 1)));
-      }
-    }
-  }
-  throw lastError;
-}
 
 // ============================================================================
 // MASTER AI COMMAND HANDLER
 // ============================================================================
 
 async function handleMasterCommand(query, userId = 'default') {
+  // ============================================================
+  // RATE LIMITING - Prevent abuse
+  // ============================================================
+  const rateCheck = checkRateLimit(`user_${usernameToId(userId)}`, 30, 60000); // 30 requests per minute
+  if (!rateCheck.allowed) {
+    return { master: { response: `⏳ *Rate limit exceeded.* Please wait ${Math.ceil(rateCheck.resetIn / 1000)} seconds before trying again.` }};
+  }
+
   // ============================================================
   // SMART CONTEXT SYSTEM - Makes the bot context-aware like Claude Code
   // ============================================================
@@ -1234,9 +1235,8 @@ Examples:
             return { master: { response: `❌ Missing required params. Need: repo, path, content` }};
           }
 
-          // RISK CHECK - detect risky changes
-          const riskyFiles = ['package.json', '.env', 'server.js', 'index.js', 'config.js', 'database.js'];
-          const isRiskyFile = riskyFiles.some(f => commitPath.endsWith(f));
+          // RISK CHECK - detect risky changes using helper
+          const isRisky = isRiskyFile(commitPath);
 
           // Check if we're deleting a lot of content
           let existingContent = null;
@@ -1253,9 +1253,9 @@ Examples:
             (commitContent.length < existingContent.length * 0.5); // More than 50% reduction
 
           // If risky, ask for confirmation (unless already confirmed)
-          if ((isRiskyFile || isLargeDeletion) && !intent.params.confirmed) {
+          if ((isRisky || isLargeDeletion) && !intent.params.confirmed) {
             const riskWarnings = [];
-            if (isRiskyFile) riskWarnings.push(`⚠️ \`${commitPath}\` is a critical file`);
+            if (isRisky) riskWarnings.push(`⚠️ \`${commitPath}\` is a critical file`);
             if (isLargeDeletion) riskWarnings.push(`⚠️ This removes ${Math.round((1 - commitContent.length/existingContent.length) * 100)}% of the file content`);
 
             // Store pending change for confirmation
@@ -1445,31 +1445,12 @@ Return JSON:
 
           let analysis;
           try {
-            let jsonStr = analysisResult.response.trim();
+            // Use robust JSON extraction helper
+            analysis = extractJson(analysisResult.response);
 
-            // Method 1: Extract from ```json code block
-            const codeBlockMatch = jsonStr.match(/```json?\s*\n?([\s\S]*?)\n?```/);
-            if (codeBlockMatch) {
-              jsonStr = codeBlockMatch[1].trim();
+            if (!analysis) {
+              throw new Error('No valid JSON found');
             }
-
-            // Method 2: Find JSON object starting with {
-            const startIdx = jsonStr.indexOf('{"');
-            if (startIdx !== -1) {
-              let depth = 0;
-              let endIdx = startIdx;
-              for (let i = startIdx; i < jsonStr.length; i++) {
-                if (jsonStr[i] === '{') depth++;
-                if (jsonStr[i] === '}') depth--;
-                if (depth === 0) { endIdx = i; break; }
-              }
-              jsonStr = jsonStr.substring(startIdx, endIdx + 1);
-            }
-
-            // Clean any remaining issues
-            jsonStr = jsonStr.trim();
-
-            analysis = JSON.parse(jsonStr);
           } catch (e) {
             // Fallback: try to extract key info manually
             const diagMatch = analysisResult.response.match(/"diagnosis":\s*"([^"]+)"/);
@@ -1483,7 +1464,7 @@ Return JSON:
               return { master: { response }};
             }
 
-            return { master: { response: response + `📋 *Analysis failed to parse.*\n\nTry being more specific, e.g.: "/do the Label Data dropdown in rei-dashboard doesn't show options"\n\n_Debug: starts with "${jsonStr.substring(0, 20)}"_` }};
+            return { master: { response: response + `📋 *Analysis failed to parse.*\n\nTry being more specific, e.g.: "/do the Label Data dropdown in rei-dashboard doesn't show options"\n\n_Debug: ${e.message}_` }};
           }
 
           // ========== PHASE 3: PRESENT FINDINGS ==========
@@ -2101,8 +2082,19 @@ app.post('/slack/commands', express.urlencoded({ extended: true }), async (req, 
   }
 });
 
-// Format Slack response
+// Format Slack response with auto-truncation for long messages
 function formatSlackResponse(command, result) {
+  let response = formatSlackResponseInternal(command, result);
+
+  // Truncate if too long for Slack (max 4000 chars, leave room for safety)
+  if (response.length > 3800) {
+    response = truncate(response, 3800, '\n\n_... (truncated for Slack)_');
+  }
+
+  return response;
+}
+
+function formatSlackResponseInternal(command, result) {
   if (result.error) return `❌ ${result.error}`;
   if (result.health) {
     const h = result.health;

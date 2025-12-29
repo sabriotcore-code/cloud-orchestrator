@@ -94,6 +94,20 @@ const migrations = [
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
   )`,
 
+  // Change history table - tracks all bot code changes for rollback
+  `CREATE TABLE IF NOT EXISTS change_history (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    repo VARCHAR(255) NOT NULL,
+    path VARCHAR(500) NOT NULL,
+    action VARCHAR(20) NOT NULL CHECK (action IN ('create', 'update', 'delete')),
+    old_content TEXT,
+    new_content TEXT,
+    message TEXT,
+    user_id VARCHAR(100),
+    commit_sha VARCHAR(40),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+  )`,
+
   // Create indexes for performance
   `CREATE INDEX IF NOT EXISTS idx_conversations_session ON conversations(session_id)`,
   `CREATE INDEX IF NOT EXISTS idx_conversations_created ON conversations(created_at DESC)`,
@@ -103,7 +117,10 @@ const migrations = [
   `CREATE INDEX IF NOT EXISTS idx_memory_key ON memory(key)`,
   `CREATE INDEX IF NOT EXISTS idx_memory_category ON memory(category)`,
   `CREATE INDEX IF NOT EXISTS idx_usage_logs_created ON usage_logs(created_at DESC)`,
-  `CREATE INDEX IF NOT EXISTS idx_usage_logs_provider ON usage_logs(provider)`
+  `CREATE INDEX IF NOT EXISTS idx_usage_logs_provider ON usage_logs(provider)`,
+  `CREATE INDEX IF NOT EXISTS idx_change_history_repo ON change_history(repo)`,
+  `CREATE INDEX IF NOT EXISTS idx_change_history_path ON change_history(repo, path)`,
+  `CREATE INDEX IF NOT EXISTS idx_change_history_created ON change_history(created_at DESC)`
 ];
 
 async function migrate() {

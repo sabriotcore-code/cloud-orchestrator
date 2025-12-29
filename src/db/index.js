@@ -264,6 +264,51 @@ export async function getTodayUsage() {
 }
 
 // ============================================================================
+// CHANGE HISTORY - Tracks all bot code changes for rollback
+// ============================================================================
+
+export async function logChangeHistory(data) {
+  const { repo, path, action, oldContent, newContent, message, userId, commitSha } = data;
+  const result = await query(
+    `INSERT INTO change_history (repo, path, action, old_content, new_content, message, user_id, commit_sha)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+     RETURNING *`,
+    [repo, path, action, oldContent, newContent, message, userId, commitSha]
+  );
+  return result.rows[0];
+}
+
+export async function getChangeHistory(repo, limit = 20) {
+  const result = await query(
+    `SELECT * FROM change_history
+     WHERE repo = $1
+     ORDER BY created_at DESC
+     LIMIT $2`,
+    [repo, limit]
+  );
+  return result.rows;
+}
+
+export async function getChangeById(changeId) {
+  const result = await query(
+    'SELECT * FROM change_history WHERE id = $1',
+    [changeId]
+  );
+  return result.rows[0];
+}
+
+export async function getFileChanges(repo, path, limit = 10) {
+  const result = await query(
+    `SELECT * FROM change_history
+     WHERE repo = $1 AND path = $2
+     ORDER BY created_at DESC
+     LIMIT $3`,
+    [repo, path, limit]
+  );
+  return result.rows;
+}
+
+// ============================================================================
 // HEALTH
 // ============================================================================
 

@@ -1,4 +1,5 @@
 import * as db from '../db/index.js';
+import { cacheGet, cacheSet, cacheClear } from '../utils/helpers.js';
 
 // ============================================================================
 // ENHANCED CONVERSATION MEMORY SERVICE
@@ -7,6 +8,7 @@ import * as db from '../db/index.js';
 
 const MAX_HISTORY = 50; // Keep last 50 messages per user
 const SUMMARY_THRESHOLD = 20; // Summarize when we hit this many messages
+const MEMORY_CACHE_TTL = 60000; // 1 minute cache for memory lookups
 
 // Store a message in conversation history
 export async function remember(userId, role, content) {
@@ -195,5 +197,135 @@ export async function learnFromInteraction(userId, interaction) {
     return { success: true };
   } catch (error) {
     return { success: false };
+  }
+}
+
+// ============================================================================
+// INVESTIGATION CACHE (#13-18)
+// Cache investigation results to avoid re-reading files
+// ============================================================================
+
+// Store investigation results
+export async function cacheInvestigation(repo, data) {
+  const key = `investigation_${repo.replace('/', '_')}`;
+  cacheSet(key, data, 300000); // 5 minute cache
+  await store(key, JSON.stringify(data), 'investigations');
+  return { success: true };
+}
+
+// Get cached investigation
+export async function getInvestigation(repo) {
+  const key = `investigation_${repo.replace('/', '_')}`;
+
+  // Try memory cache first
+  const cached = cacheGet(key);
+  if (cached) return cached;
+
+  // Fall back to database
+  const stored = await retrieve(key);
+  if (stored.value) {
+    try {
+      const data = JSON.parse(stored.value);
+      cacheSet(key, data, 300000); // Re-cache
+      return data;
+    } catch (e) {
+      return null;
+    }
+  }
+  return null;
+}
+
+// ============================================================================
+// FIX PATTERN STORAGE (#17)
+// Store successful fix patterns for future reference
+// ============================================================================
+
+export async function storeFixPattern(pattern) {
+  const { type, oldPattern, newPattern, description, repo } = pattern;
+  const key = `fix_${type}_${Date.now()}`;
+
+  await store(key, JSON.stringify({
+    type,
+    oldPattern,
+    newPattern,
+    description,
+    repo,
+    timestamp: new Date().toISOString()
+  }), 'fix_patterns');
+
+  return { success: true, key };
+}
+
+export async function getFixPatterns(type) {
+  const patterns = await retrieveCategory('fix_patterns');
+  if (!patterns.values) return [];
+
+  return Object.values(patterns.values)
+    .map(v => {
+      try { return JSON.parse(v); } catch (e) { return null; }
+    })
+    .filter(p => p && (!type || p.type === type))
+    .slice(-20); // Last 20 patterns
+}
+
+// ============================================================================
+// COMMAND HISTORY (#18)
+// Track user's command history for quick access
+// ============================================================================
+
+export async function logCommand(userId, command, result) {
+  const key = `cmd_${userId}_${Date.now()}`;
+  await store(key, JSON.stringify({
+    command,
+    result: result.substring(0, 500), // Truncate result
+    timestamp: new Date().toISOString()
+  }), 'command_history');
+}
+
+export async function getCommandHistory(userId, limit = 10) {
+  const history = await retrieveCategory('command_history');
+  if (!history.values) return [];
+
+  return Object.entries(history.values)
+    .filter(([k]) => k.includes(userId))
+    .map(([_, v]) => {
+      try { return JSON.parse(v); } catch (e) { return null; }
+    })
+    .filter(Boolean)
+    .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
+    .slice(0, limit);
+}
+
+// ============================================================================
+// USER REPO PREFERENCES (#14)
+// Remember which repos users work with most
+// ============================================================================
+
+export async function trackRepoUsage(userId, repo) {
+  const key = `repo_usage_${userId}`;
+  const existing = await retrieve(key);
+  let usage = {};
+
+  if (existing.value) {
+    try { usage = JSON.parse(existing.value); } catch (e) {}
+  }
+
+  usage[repo] = (usage[repo] || 0) + 1;
+  await store(key, JSON.stringify(usage), 'repo_usage');
+}
+
+export async function getUserRepoPreferences(userId) {
+  const key = `repo_usage_${userId}`;
+  const existing = await retrieve(key);
+
+  if (!existing.value) return [];
+
+  try {
+    const usage = JSON.parse(existing.value);
+    return Object.entries(usage)
+      .sort((a, b) => b[1] - a[1])
+      .map(([repo]) => repo);
+  } catch (e) {
+    return [];
   }
 }

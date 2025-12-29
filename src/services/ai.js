@@ -3,9 +3,18 @@ import OpenAI from 'openai';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import dotenv from 'dotenv';
 import * as db from '../db/index.js';
+import { withRetry, withTimeout, cacheGet, cacheSet, extractJson } from '../utils/helpers.js';
 
 // Load environment variables first
 dotenv.config();
+
+// ============================================================================
+// CONFIGURATION
+// ============================================================================
+
+const AI_TIMEOUT_MS = 45000; // 45 second timeout for AI calls
+const AI_MAX_RETRIES = 2;    // Retry failed calls up to 2 times
+const CACHE_TTL_MS = 300000; // 5 minute cache for identical queries
 
 // ============================================================================
 // AI CLIENTS (lazy initialization)
@@ -91,18 +100,36 @@ RESPONSES:
 // INDIVIDUAL AI QUERIES
 // ============================================================================
 
-export async function askClaude(content, systemPrompt = PROMPTS.general) {
+export async function askClaude(content, systemPrompt = PROMPTS.general, options = {}) {
   const startTime = Date.now();
   const client = getAnthropicClient();
   if (!client) {
     return { provider: 'claude', error: 'ANTHROPIC_API_KEY not configured', latencyMs: 0, success: false };
   }
+
+  // Check cache for identical queries (unless disabled)
+  if (!options.noCache) {
+    const cacheKey = `claude_${hashQuery(systemPrompt + content)}`;
+    const cached = cacheGet(cacheKey);
+    if (cached) {
+      console.log('[AI] Claude cache hit');
+      return { ...cached, cached: true, latencyMs: Date.now() - startTime };
+    }
+  }
+
   try {
-    const response = await client.messages.create({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 2048,
-      messages: [{ role: 'user', content: systemPrompt + content }],
-    });
+    // Use retry with timeout for resilience
+    const response = await withRetry(async () => {
+      return await withTimeout(
+        client.messages.create({
+          model: 'claude-sonnet-4-20250514',
+          max_tokens: options.maxTokens || 2048,
+          messages: [{ role: 'user', content: systemPrompt + content }],
+        }),
+        AI_TIMEOUT_MS,
+        'Claude API request timed out'
+      );
+    }, { maxRetries: AI_MAX_RETRIES, delayMs: 1000 });
 
     const tokensIn = response.usage?.input_tokens || 0;
     const tokensOut = response.usage?.output_tokens || 0;
@@ -112,7 +139,7 @@ export async function askClaude(content, systemPrompt = PROMPTS.general) {
     // Log to database (optional - don't fail if DB unavailable)
     try { await db.logUsage('claude', tokensIn, tokensOut, costUsd, 'messages.create'); } catch(e) {}
 
-    return {
+    const result = {
       provider: 'claude',
       response: response.content[0].text,
       tokensIn,
@@ -121,7 +148,16 @@ export async function askClaude(content, systemPrompt = PROMPTS.general) {
       latencyMs,
       success: true,
     };
+
+    // Cache the successful result
+    if (!options.noCache) {
+      const cacheKey = `claude_${hashQuery(systemPrompt + content)}`;
+      cacheSet(cacheKey, result, CACHE_TTL_MS);
+    }
+
+    return result;
   } catch (error) {
+    console.error('[AI] Claude error:', error.message);
     return {
       provider: 'claude',
       error: error.message,
@@ -131,18 +167,35 @@ export async function askClaude(content, systemPrompt = PROMPTS.general) {
   }
 }
 
-export async function askGPT(content, systemPrompt = PROMPTS.general) {
+export async function askGPT(content, systemPrompt = PROMPTS.general, options = {}) {
   const startTime = Date.now();
   const client = getOpenAIClient();
   if (!client) {
     return { provider: 'gpt', error: 'OPENAI_API_KEY not configured', latencyMs: 0, success: false };
   }
+
+  // Check cache for identical queries
+  if (!options.noCache) {
+    const cacheKey = `gpt_${hashQuery(systemPrompt + content)}`;
+    const cached = cacheGet(cacheKey);
+    if (cached) {
+      console.log('[AI] GPT cache hit');
+      return { ...cached, cached: true, latencyMs: Date.now() - startTime };
+    }
+  }
+
   try {
-    const response = await client.chat.completions.create({
-      model: 'gpt-4o',
-      max_tokens: 2048,
-      messages: [{ role: 'user', content: systemPrompt + content }],
-    });
+    const response = await withRetry(async () => {
+      return await withTimeout(
+        client.chat.completions.create({
+          model: 'gpt-4o',
+          max_tokens: options.maxTokens || 2048,
+          messages: [{ role: 'user', content: systemPrompt + content }],
+        }),
+        AI_TIMEOUT_MS,
+        'GPT API request timed out'
+      );
+    }, { maxRetries: AI_MAX_RETRIES, delayMs: 1000 });
 
     const tokensIn = response.usage?.prompt_tokens || 0;
     const tokensOut = response.usage?.completion_tokens || 0;
@@ -152,7 +205,7 @@ export async function askGPT(content, systemPrompt = PROMPTS.general) {
     // Log to database (optional - don't fail if DB unavailable)
     try { await db.logUsage('gpt', tokensIn, tokensOut, costUsd, 'chat.completions'); } catch(e) {}
 
-    return {
+    const result = {
       provider: 'gpt',
       response: response.choices[0].message.content,
       tokensIn,
@@ -161,7 +214,16 @@ export async function askGPT(content, systemPrompt = PROMPTS.general) {
       latencyMs,
       success: true,
     };
+
+    // Cache the successful result
+    if (!options.noCache) {
+      const cacheKey = `gpt_${hashQuery(systemPrompt + content)}`;
+      cacheSet(cacheKey, result, CACHE_TTL_MS);
+    }
+
+    return result;
   } catch (error) {
+    console.error('[AI] GPT error:', error.message);
     return {
       provider: 'gpt',
       error: error.message,
@@ -171,15 +233,32 @@ export async function askGPT(content, systemPrompt = PROMPTS.general) {
   }
 }
 
-export async function askGemini(content, systemPrompt = PROMPTS.general) {
+export async function askGemini(content, systemPrompt = PROMPTS.general, options = {}) {
   const startTime = Date.now();
   const client = getGeminiClient();
   if (!client) {
     return { provider: 'gemini', error: 'GEMINI_API_KEY not configured', latencyMs: 0, success: false };
   }
+
+  // Check cache for identical queries
+  if (!options.noCache) {
+    const cacheKey = `gemini_${hashQuery(systemPrompt + content)}`;
+    const cached = cacheGet(cacheKey);
+    if (cached) {
+      console.log('[AI] Gemini cache hit');
+      return { ...cached, cached: true, latencyMs: Date.now() - startTime };
+    }
+  }
+
   try {
     const model = client.getGenerativeModel({ model: 'gemini-2.0-flash' });
-    const result = await model.generateContent(systemPrompt + content);
+    const result = await withRetry(async () => {
+      return await withTimeout(
+        model.generateContent(systemPrompt + content),
+        AI_TIMEOUT_MS,
+        'Gemini API request timed out'
+      );
+    }, { maxRetries: AI_MAX_RETRIES, delayMs: 1000 });
 
     const usageMetadata = result.response.usageMetadata || {};
     const tokensIn = usageMetadata.promptTokenCount || 0;
@@ -190,7 +269,7 @@ export async function askGemini(content, systemPrompt = PROMPTS.general) {
     // Log to database (optional - don't fail if DB unavailable)
     try { await db.logUsage('gemini', tokensIn, tokensOut, costUsd, 'generateContent'); } catch(e) {}
 
-    return {
+    const aiResult = {
       provider: 'gemini',
       response: result.response.text(),
       tokensIn,
@@ -199,7 +278,16 @@ export async function askGemini(content, systemPrompt = PROMPTS.general) {
       latencyMs,
       success: true,
     };
+
+    // Cache the successful result
+    if (!options.noCache) {
+      const cacheKey = `gemini_${hashQuery(systemPrompt + content)}`;
+      cacheSet(cacheKey, aiResult, CACHE_TTL_MS);
+    }
+
+    return aiResult;
   } catch (error) {
+    console.error('[AI] Gemini error:', error.message);
     return {
       provider: 'gemini',
       error: error.message,
@@ -327,6 +415,43 @@ function calculateCost(provider, tokensIn, tokensOut) {
   const rates = COST_RATES[provider];
   if (!rates) return 0;
   return (tokensIn / 1000000) * rates.input + (tokensOut / 1000000) * rates.output;
+}
+
+// Simple hash for cache keys
+function hashQuery(str) {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    const char = str.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash; // Convert to 32bit integer
+  }
+  return Math.abs(hash).toString(36);
+}
+
+// ============================================================================
+// FALLBACK SUPPORT - Use GPT if Claude fails
+// ============================================================================
+
+export async function askWithFallback(content, systemPrompt = PROMPTS.general, options = {}) {
+  // Try Claude first
+  const claudeResult = await askClaude(content, systemPrompt, options);
+  if (claudeResult.success) {
+    return claudeResult;
+  }
+
+  console.log('[AI] Claude failed, falling back to GPT');
+
+  // Fallback to GPT
+  const gptResult = await askGPT(content, systemPrompt, options);
+  if (gptResult.success) {
+    return { ...gptResult, fallback: true, originalError: claudeResult.error };
+  }
+
+  console.log('[AI] GPT failed, falling back to Gemini');
+
+  // Last resort: Gemini
+  const geminiResult = await askGemini(content, systemPrompt, options);
+  return { ...geminiResult, fallback: true, originalError: claudeResult.error };
 }
 
 export function getProviderStatus() {
