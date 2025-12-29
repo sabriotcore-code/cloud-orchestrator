@@ -689,7 +689,27 @@ Examples:
         return { master: { response: `📋 *Current Master Context:*\n\n${currentContext.substring(0, 2500)}` }};
 
       case 'ASK_AI':
-        const askResults = await ai.askAll(intent.params.question, 'general');
+        // Check if question is about projects/repos - if so, include real data
+        const questionLower = (intent.params.question || '').toLowerCase();
+        let enrichedQuestion = intent.params.question;
+
+        if (questionLower.includes('project') || questionLower.includes('repo') ||
+            questionLower.includes('what do') || questionLower.includes('what are')) {
+          // Fetch real repo data to include in the question
+          try {
+            const repos = await github.listRepos(10);
+            const repoInfo = repos.map(r => `- ${r.name}: ${r.description || 'No description'}`).join('\n');
+
+            // Get master context
+            const ctx = await context.getContextSummary();
+
+            enrichedQuestion = `${intent.params.question}\n\nHere is the REAL data from GitHub and my knowledge base:\n\n=== REPOS ===\n${repoInfo}\n\n=== CONTEXT ===\n${ctx}\n\nUse this REAL data to answer accurately. Do not say you cannot access GitHub - the data is provided above.`;
+          } catch (e) {
+            console.log('[ASK_AI] Could not enrich with repo data:', e.message);
+          }
+        }
+
+        const askResults = await ai.askAll(enrichedQuestion, 'general');
         const consensus = await ai.buildConsensus(askResults, 'weighted');
         return { master: {
           response: `🤖 *AI Consensus:*\n${consensus.response}\n\n` +
