@@ -8,6 +8,7 @@ import { v4 as uuidv4 } from 'uuid';
 
 import * as db from './db/index.js';
 import * as ai from './services/ai.js';
+import * as github from './services/github.js';
 import { initSlack, slackApp } from './services/slack.js';
 
 const app = express();
@@ -55,10 +56,14 @@ app.get('/health', async (req, res) => {
     // Check AI providers
     const providers = ai.getProviderStatus();
 
+    // Check GitHub
+    const githubUser = await github.getAuthenticatedUser();
+
     res.json({
       status: 'healthy',
       database: 'connected',
       providers,
+      github: githubUser ? { connected: true, user: githubUser.login } : { connected: false },
       uptime: process.uptime(),
       memory: process.memoryUsage(),
     });
@@ -300,6 +305,134 @@ app.get('/usage', async (req, res) => {
 });
 
 // ============================================================================
+// GITHUB ENDPOINTS
+// ============================================================================
+
+// List all repos
+app.get('/github/repos', async (req, res) => {
+  try {
+    const repos = await github.listRepos(50);
+    res.json({ count: repos.length, repos });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get repo details
+app.get('/github/repos/:owner/:repo', async (req, res) => {
+  try {
+    const { owner, repo } = req.params;
+    const data = await github.getRepo(owner, repo);
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// List files in repo
+app.get('/github/repos/:owner/:repo/files', async (req, res) => {
+  try {
+    const { owner, repo } = req.params;
+    const { path = '' } = req.query;
+    const files = await github.listFiles(owner, repo, path);
+    res.json({ path, files });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Read a file
+app.get('/github/repos/:owner/:repo/file/*', async (req, res) => {
+  try {
+    const { owner, repo } = req.params;
+    const path = req.params[0];
+    const file = await github.readFile(owner, repo, path);
+    res.json(file);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get commits
+app.get('/github/repos/:owner/:repo/commits', async (req, res) => {
+  try {
+    const { owner, repo } = req.params;
+    const commits = await github.getCommits(owner, repo, 20);
+    res.json({ commits });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// List issues
+app.get('/github/repos/:owner/:repo/issues', async (req, res) => {
+  try {
+    const { owner, repo } = req.params;
+    const { state = 'open' } = req.query;
+    const issues = await github.listIssues(owner, repo, state);
+    res.json({ issues });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Create issue
+app.post('/github/repos/:owner/:repo/issues', async (req, res) => {
+  try {
+    const { owner, repo } = req.params;
+    const { title, body, labels } = req.body;
+    const issue = await github.createIssue(owner, repo, title, body, labels);
+    res.json(issue);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// List PRs
+app.get('/github/repos/:owner/:repo/pulls', async (req, res) => {
+  try {
+    const { owner, repo } = req.params;
+    const { state = 'open' } = req.query;
+    const prs = await github.listPullRequests(owner, repo, state);
+    res.json({ pullRequests: prs });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Search code
+app.get('/github/search', async (req, res) => {
+  try {
+    const { q } = req.query;
+    if (!q) {
+      return res.status(400).json({ error: 'Query parameter q is required' });
+    }
+    const results = await github.searchCode(q);
+    res.json({ results });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Create/update file (commit)
+app.put('/github/repos/:owner/:repo/file/*', async (req, res) => {
+  try {
+    const { owner, repo } = req.params;
+    const path = req.params[0];
+    const { content, message, sha } = req.body;
+
+    if (!content || !message) {
+      return res.status(400).json({ error: 'content and message are required' });
+    }
+
+    const result = await github.createOrUpdateFile(owner, repo, path, content, message, sha);
+    res.json({ success: true, commit: result.commit.sha });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================================================
 // ERROR HANDLING
 // ============================================================================
 
@@ -439,10 +572,15 @@ Endpoints:
   POST /ai/all              - Query all 3 AIs
   POST /ai/consensus        - Multi-AI consensus
   POST /review              - Code review panel
+  GET  /github/repos        - List all GitHub repos
+  GET  /github/repos/:o/:r  - Get repo details
+  GET  /github/search       - Search code
   POST /slack/commands      - Slack slash commands
   POST /slack/events        - Slack events
 
-Slack Commands: /ask /review /challenge /consensus /health
+Slack Commands:
+  AI:     /ask /review /challenge /consensus /health /usage
+  GitHub: /repos /commits /files /readfile /issues /search
 `);
 });
 
