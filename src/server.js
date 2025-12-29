@@ -825,6 +825,51 @@ async function handleMasterCommand(query, userId = 'default') {
     return { health };
   }
 
+  // History shortcut: "history", "history rei-dashboard", "show changes"
+  if (queryLower.startsWith('history') || queryLower.includes('show changes') || queryLower.includes('recent changes')) {
+    const repoMatch = query.match(/\b(rei-dashboard|cloud-orchestrator|ai-orchestrator|rei-automation)\b/i);
+    const repo = repoMatch ? repoMatch[1].toLowerCase() : 'cloud-orchestrator';
+    const changes = await github.getChangeHistory('sabriotcore-code', repo, 10);
+    if (changes.length === 0) {
+      return { master: { response: `📜 *No changes recorded yet for ${repo}*\n\nChanges will appear here after the bot makes commits.` }};
+    }
+    return { master: { response: `📜 *Recent Bot Changes to ${repo}:*\n\n${github.formatChangeHistory(changes)}\n\n_Use "rollback <repo> <file> <changeId>" to undo_` }};
+  }
+
+  // Rollback shortcut: "rollback rei-dashboard index.html change_xxx"
+  if (queryLower.startsWith('rollback ')) {
+    const parts = query.replace(/^rollback\s+/i, '').trim().split(/\s+/);
+    const repo = parts[0] || '';
+    const file = parts[1] || '';
+    const changeId = parts[2] || '';
+
+    if (!repo) {
+      return { master: { response: `❌ Usage: rollback <repo> <file> [changeId]\n\nExample: rollback rei-dashboard index.html\n\nFirst run "history <repo>" to see available changes.` }};
+    }
+
+    try {
+      if (changeId) {
+        // Execute rollback
+        await github.rollbackFile('sabriotcore-code', repo, file, changeId, userId);
+        return { master: { response: `✅ *Rolled back ${file}!*\n\nThe file has been restored to its previous version.` }};
+      } else if (file) {
+        // Show versions for this file
+        const changes = await github.getChangeHistory('sabriotcore-code', repo, 20);
+        const fileChanges = changes.filter(c => c.path === file && c.oldContent);
+        if (fileChanges.length === 0) {
+          return { master: { response: `❌ No rollback versions found for ${file}` }};
+        }
+        return { master: { response: `📜 *Available versions for ${file}:*\n\n${fileChanges.slice(0, 5).map(c => `• \`${c.id}\` - ${c.message} (${new Date(c.timestamp).toLocaleString()})`).join('\n')}\n\n_Use "rollback ${repo} ${file} <changeId>" to restore_` }};
+      } else {
+        // Show all changes for repo
+        const changes = await github.getChangeHistory('sabriotcore-code', repo, 10);
+        return { master: { response: `📜 *Recent changes to ${repo}:*\n\n${github.formatChangeHistory(changes)}\n\n_Specify a file to see rollback options_` }};
+      }
+    } catch (e) {
+      return { master: { response: `❌ Rollback failed: ${e.message}` }};
+    }
+  }
+
   // ============================================================
   // #7: PROACTIVE CONTEXT LOADING - Auto-fetch mentioned files
   // ============================================================
