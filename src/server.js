@@ -12,6 +12,12 @@ import * as github from './services/github.js';
 import * as web from './services/web.js';
 import * as google from './services/google.js';
 import * as googleAI from './services/google-ai.js';
+import * as aiProviders from './services/ai-providers.js';
+import * as vectorDb from './services/vector-db.js';
+import * as devops from './services/devops.js';
+import * as business from './services/business.js';
+import * as security from './services/security.js';
+import * as smart from './services/smart.js';
 import * as memory from './services/memory.js';
 import * as context from './services/context.js';
 import * as changelog from './services/changelog.js';
@@ -920,11 +926,21 @@ async function handleMasterCommand(query, userId = 'default') {
 
   if (queryLower === 'status' || queryLower === 'health') {
     const health = {
-      ...ai.getProviderStatus(),
-      github: github.isConfigured(),
-      web: web.isConfigured(),
-      google: google.isConfigured(),
-      googleAI: googleAI.getStatus()
+      core: {
+        ...ai.getProviderStatus(),
+        github: github.isConfigured(),
+        web: web.isConfigured(),
+        google: google.isConfigured()
+      },
+      ai: {
+        googleAI: googleAI.getStatus(),
+        providers: aiProviders.getProviderStatus()
+      },
+      data: vectorDb.getStatus(),
+      devops: devops.getStatus(),
+      business: business.getStatus(),
+      security: security.getStatus(),
+      smart: smart.getStatus()
     };
     return { health };
   }
