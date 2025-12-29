@@ -12,6 +12,7 @@ import * as github from './services/github.js';
 import * as web from './services/web.js';
 import * as google from './services/google.js';
 import * as memory from './services/memory.js';
+import * as context from './services/context.js';
 import { initSlack, slackApp } from './services/slack.js';
 
 const app = express();
@@ -483,7 +484,10 @@ async function handleMasterCommand(query, userId = 'default') {
   await memory.remember(userId, 'user', query);
 
   // Get conversation context
-  const context = await memory.getContextString(userId, 3);
+  const conversationContext = await memory.getContextString(userId, 3);
+
+  // Get master context summary
+  const masterContextSummary = await context.getContextSummary();
 
   // Use Claude to understand intent and extract parameters
   const intentPrompt = `You are a smart command router. Analyze this user request and determine what action to take.
@@ -510,8 +514,14 @@ Available actions:
 - REMEMBER: Store something in memory (when asked to "remember", "save", "store")
 - RECALL: Retrieve from memory (when asked to "recall", "what did I say about")
 - HISTORY: Show conversation history
+- UPDATE_CONTEXT: Update master context file (when asked to "log this", "add to context", "update status")
+- GET_CONTEXT: Show current master context/status
 
-${context ? `Recent conversation:\n${context}\n` : ''}
+=== MASTER CONTEXT (What I know about Matt's projects) ===
+${masterContextSummary}
+===
+
+${conversationContext ? `Recent conversation:\n${conversationContext}\n` : ''}
 
 User request: "${query}"
 
@@ -664,6 +674,19 @@ Examples:
           historyText += `${icon} ${m.content.substring(0, 100)}...\n`;
         }
         return { master: { response: historyText }};
+
+      case 'UPDATE_CONTEXT':
+        const section = intent.params.section || 'CURRENT WORK';
+        const updateContent = intent.params.content || query;
+        const updateResult = await context.updateContext(section, updateContent);
+        if (updateResult.success) {
+          return { master: { response: `✅ Master context updated!\nSection: ${section}\nContent: ${updateContent}` }};
+        }
+        return { master: { response: `❌ Failed to update context: ${updateResult.error}` }};
+
+      case 'GET_CONTEXT':
+        const currentContext = await context.getContextSummary();
+        return { master: { response: `📋 *Current Master Context:*\n\n${currentContext.substring(0, 2500)}` }};
 
       case 'ASK_AI':
         const askResults = await ai.askAll(intent.params.question, 'general');
@@ -903,6 +926,13 @@ function formatSlackResponse(command, result) {
 // ============================================================================
 
 const slackStatus = process.env.SLACK_BOT_TOKEN ? 'enabled' : 'disabled';
+
+// Load master context on startup
+context.loadContext().then(() => {
+  console.log('[Startup] Master context loaded');
+}).catch(err => {
+  console.log('[Startup] Master context load failed:', err.message);
+});
 
 app.listen(PORT, () => {
   console.log(`
