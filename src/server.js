@@ -506,6 +506,50 @@ app.post('/slack/commands', express.urlencoded({ extended: true }), async (req, 
       case '/health':
         result = { health: { ...ai.getProviderStatus(), github: github.isConfigured() } };
         break;
+      case '/repos':
+        result = { repos: await github.listRepos(20) };
+        break;
+      case '/commits':
+        if (!content.includes('/')) {
+          result = { error: 'Usage: /commits owner/repo' };
+        } else {
+          const [owner, repo] = content.split('/');
+          result = { commits: await github.getCommits(owner, repo, 10) };
+        }
+        break;
+      case '/files':
+        const filesMatch = content.match(/^([^\/]+)\/([^\s]+)(?:\s+(.*))?$/);
+        if (!filesMatch) {
+          result = { error: 'Usage: /files owner/repo [path]' };
+        } else {
+          const [, fOwner, fRepo, fPath = ''] = filesMatch;
+          result = { files: await github.listFiles(fOwner, fRepo, fPath), path: fPath || 'root' };
+        }
+        break;
+      case '/readfile':
+        const readMatch = content.match(/^([^\/]+)\/([^\s]+)\s+(.+)$/);
+        if (!readMatch) {
+          result = { error: 'Usage: /readfile owner/repo path/to/file' };
+        } else {
+          const [, rOwner, rRepo, rPath] = readMatch;
+          result = { file: await github.readFile(rOwner, rRepo, rPath) };
+        }
+        break;
+      case '/issues':
+        if (!content.includes('/')) {
+          result = { error: 'Usage: /issues owner/repo' };
+        } else {
+          const [iOwner, iRepo] = content.split('/');
+          result = { issues: await github.listIssues(iOwner, iRepo, 'open', 15) };
+        }
+        break;
+      case '/codesearch':
+        if (!content) {
+          result = { error: 'Usage: /codesearch <query>' };
+        } else {
+          result = { search: await github.searchCode(content, 10), query: content };
+        }
+        break;
       default:
         result = { error: 'Unknown command' };
     }
@@ -538,6 +582,49 @@ function formatSlackResponse(command, result) {
   }
   if (result.consensus) {
     return `🤝 *Consensus:*\n${result.consensus.response || 'No consensus'}`;
+  }
+  if (result.repos) {
+    let text = `📂 *Your GitHub Repositories:*\n\n`;
+    for (const repo of result.repos) {
+      text += `• *${repo.name}* ${repo.isPrivate ? '🔒' : '🌐'}\n`;
+    }
+    return text;
+  }
+  if (result.commits) {
+    let text = `📜 *Recent Commits:*\n\n`;
+    for (const c of result.commits) {
+      text += `• \`${c.sha}\` ${c.message}\n  _by ${c.author}_\n`;
+    }
+    return text;
+  }
+  if (result.files) {
+    let text = `📁 *Files in ${result.path}:*\n\n`;
+    for (const f of result.files) {
+      const icon = f.type === 'dir' ? '📂' : '📄';
+      text += `${icon} ${f.name}\n`;
+    }
+    return text;
+  }
+  if (result.file) {
+    const preview = result.file.content.substring(0, 1500);
+    const truncated = result.file.content.length > 1500 ? '\n_(truncated)_' : '';
+    return `📖 *${result.file.path}* (${result.file.size} bytes)\n\`\`\`\n${preview}${truncated}\n\`\`\``;
+  }
+  if (result.issues) {
+    if (result.issues.length === 0) return `🎫 *No open issues*`;
+    let text = `🎫 *Open Issues:*\n\n`;
+    for (const i of result.issues) {
+      text += `• #${i.number} ${i.title}\n  _by ${i.author}_\n`;
+    }
+    return text;
+  }
+  if (result.search) {
+    if (result.search.length === 0) return `🔍 *No results for "${result.query}"*`;
+    let text = `🔍 *Search results for "${result.query}":*\n\n`;
+    for (const r of result.search) {
+      text += `• *${r.repo}* - ${r.path}\n`;
+    }
+    return text;
   }
 
   let text = `*${command.slice(1).toUpperCase()} Results:*\n\n`;
