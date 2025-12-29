@@ -1385,28 +1385,42 @@ Return JSON:
             let jsonStr = analysisResult.response.trim();
 
             // Method 1: Extract from ```json code block
-            const codeBlockMatch = jsonStr.match(/```json?\s*([\s\S]*?)```/);
+            const codeBlockMatch = jsonStr.match(/```json?\s*\n?([\s\S]*?)\n?```/);
             if (codeBlockMatch) {
               jsonStr = codeBlockMatch[1].trim();
-            } else {
-              // Method 2: Find JSON object (first { to matching })
-              const startIdx = jsonStr.indexOf('{');
-              if (startIdx !== -1) {
-                let depth = 0;
-                let endIdx = startIdx;
-                for (let i = startIdx; i < jsonStr.length; i++) {
-                  if (jsonStr[i] === '{') depth++;
-                  if (jsonStr[i] === '}') depth--;
-                  if (depth === 0) { endIdx = i; break; }
-                }
-                jsonStr = jsonStr.substring(startIdx, endIdx + 1);
-              }
             }
+
+            // Method 2: Find JSON object starting with {
+            const startIdx = jsonStr.indexOf('{"');
+            if (startIdx !== -1) {
+              let depth = 0;
+              let endIdx = startIdx;
+              for (let i = startIdx; i < jsonStr.length; i++) {
+                if (jsonStr[i] === '{') depth++;
+                if (jsonStr[i] === '}') depth--;
+                if (depth === 0) { endIdx = i; break; }
+              }
+              jsonStr = jsonStr.substring(startIdx, endIdx + 1);
+            }
+
+            // Clean any remaining issues
+            jsonStr = jsonStr.trim();
 
             analysis = JSON.parse(jsonStr);
           } catch (e) {
-            // Return summary if JSON parsing fails - don't dump raw response
-            return { master: { response: response + `📋 *Analysis failed to parse.*\n\nTry: "/do what's wrong with the dropdown in rei-dashboard"\n\n_Error: ${e.message}_` }};
+            // Fallback: try to extract key info manually
+            const diagMatch = analysisResult.response.match(/"diagnosis":\s*"([^"]+)"/);
+            const rootMatch = analysisResult.response.match(/"rootCause":\s*"([^"]+)"/);
+
+            if (diagMatch || rootMatch) {
+              // Partial parse - show what we got
+              response += `*🔎 Diagnosis:* ${diagMatch ? diagMatch[1] : 'Could not extract'}\n\n`;
+              response += `*🎯 Root Cause:* ${rootMatch ? rootMatch[1] : 'Could not extract'}\n\n`;
+              response += `⚠️ *Could not fully parse fix details. Describe the specific fix you want.*`;
+              return { master: { response }};
+            }
+
+            return { master: { response: response + `📋 *Analysis failed to parse.*\n\nTry being more specific, e.g.: "/do the Label Data dropdown in rei-dashboard doesn't show options"\n\n_Debug: starts with "${jsonStr.substring(0, 20)}"_` }};
           }
 
           // ========== PHASE 3: PRESENT FINDINGS ==========
