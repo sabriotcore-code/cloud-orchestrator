@@ -9,6 +9,9 @@ import { v4 as uuidv4 } from 'uuid';
 import * as db from './db/index.js';
 import * as ai from './services/ai.js';
 import * as github from './services/github.js';
+import * as web from './services/web.js';
+import * as google from './services/google.js';
+import * as memory from './services/memory.js';
 import { initSlack, slackApp } from './services/slack.js';
 
 const app = express();
@@ -64,6 +67,8 @@ app.get('/health', async (req, res) => {
       database: 'connected',
       providers,
       github: githubUser ? { connected: true, user: githubUser.login } : { connected: false },
+      google: google.isConfigured(),
+      webSearch: web.isConfigured(),
       uptime: process.uptime(),
       memory: process.memoryUsage(),
     });
@@ -448,21 +453,37 @@ app.use((err, req, res, next) => {
 // MASTER AI COMMAND HANDLER
 // ============================================================================
 
-async function handleMasterCommand(query) {
+async function handleMasterCommand(query, userId = 'default') {
   if (!query) {
     return { master: {
       response: `🤖 *AI Orchestrator - Available Actions:*\n\n` +
-        `Just tell me what you need in plain English:\n` +
+        `*GitHub:*\n` +
         `• "show my repos"\n` +
         `• "what files are in cloud-orchestrator"\n` +
-        `• "read the package.json from cloud-orchestrator"\n` +
-        `• "show recent commits for cloud-orchestrator"\n` +
-        `• "what are the open issues"\n` +
-        `• "search for askClaude in my code"\n` +
+        `• "read package.json from cloud-orchestrator"\n` +
+        `• "show commits for cloud-orchestrator"\n` +
+        `• "create issue in cloud-orchestrator: title here"\n` +
+        `• "search for askClaude in my code"\n\n` +
+        `*AI:*\n` +
+        `• "ask all 3 AIs: what is the best language"\n` +
         `• "review this code: function add(a,b){return a+b}"\n` +
-        `• "ask all 3 AIs: what is the best programming language"\n`
+        `• "challenge this approach: using REST API"\n\n` +
+        `*Web:*\n` +
+        `• "search the web for nodejs best practices"\n` +
+        `• "what is the weather in New York"\n\n` +
+        `*Sheets:*\n` +
+        `• "read sheet 1MBGc... range A1:D10"\n\n` +
+        `*Memory:*\n` +
+        `• "remember that the API key is XYZ"\n` +
+        `• "what do you remember about API"\n`
     }};
   }
+
+  // Store user message in memory
+  await memory.remember(userId, 'user', query);
+
+  // Get conversation context
+  const context = await memory.getContextString(userId, 3);
 
   // Use Claude to understand intent and extract parameters
   const intentPrompt = `You are a command router. Analyze this user request and determine what action to take.
@@ -473,10 +494,18 @@ Available actions:
 - READ: Read a file (needs: owner, repo, filepath)
 - COMMITS: Show commits (needs: owner, repo)
 - ISSUES: Show issues (needs: owner, repo)
+- CREATE_ISSUE: Create a GitHub issue (needs: owner, repo, title, body)
 - SEARCH: Search code (needs: query)
+- WEB_SEARCH: Search the web (needs: query)
+- READ_SHEET: Read Google Sheet (needs: spreadsheetId, range)
 - ASK_AI: Ask a question to all 3 AIs (needs: question)
 - REVIEW: Code review (needs: code)
 - CHALLENGE: Challenge an approach (needs: content)
+- REMEMBER: Store something in memory (needs: key, value)
+- RECALL: Retrieve from memory (needs: key)
+- HISTORY: Show conversation history
+
+${context ? `Recent conversation:\n${context}\n` : ''}
 
 User request: "${query}"
 
@@ -488,7 +517,9 @@ Respond with ONLY a JSON object (no markdown, no explanation):
 Examples:
 - "show my repos" → {"action": "REPOS", "params": {}}
 - "files in cloud-orchestrator" → {"action": "FILES", "params": {"owner": "sabriotcore-code", "repo": "cloud-orchestrator", "path": ""}}
-- "read package.json from cloud-orchestrator" → {"action": "READ", "params": {"owner": "sabriotcore-code", "repo": "cloud-orchestrator", "filepath": "package.json"}}
+- "search the web for nodejs" → {"action": "WEB_SEARCH", "params": {"query": "nodejs"}}
+- "create issue: fix bug" → {"action": "CREATE_ISSUE", "params": {"owner": "sabriotcore-code", "repo": "cloud-orchestrator", "title": "fix bug", "body": ""}}
+- "remember API key is abc" → {"action": "REMEMBER", "params": {"key": "API key", "value": "abc"}}
 - "what is 2+2" → {"action": "ASK_AI", "params": {"question": "what is 2+2"}}`;
 
   const intentResult = await ai.askClaude(intentPrompt, '');
@@ -554,6 +585,74 @@ Examples:
       case 'SEARCH':
         const search = await github.searchCode(intent.params.query, 10);
         return { search, query: intent.params.query };
+
+      case 'CREATE_ISSUE':
+        const newIssue = await github.createIssue(
+          intent.params.owner || 'sabriotcore-code',
+          intent.params.repo || 'cloud-orchestrator',
+          intent.params.title,
+          intent.params.body || ''
+        );
+        return { master: { response: `✅ *Issue Created:* #${newIssue.number}\n${newIssue.url}` }};
+
+      case 'WEB_SEARCH':
+        const webResults = await web.search(intent.params.query);
+        if (!webResults.success || webResults.results.length === 0) {
+          // Fallback to AI if no web results
+          const aiAnswer = await ai.askAll(intent.params.query, 'general');
+          const aiConsensus = await ai.buildConsensus(aiAnswer, 'weighted');
+          const response = `🌐 *Web search found no direct results, here's what the AIs say:*\n\n${aiConsensus.response}`;
+          await memory.remember(userId, 'assistant', response);
+          return { master: { response }};
+        }
+        let webText = `🌐 *Web Search: "${intent.params.query}"*\n\n`;
+        for (const r of webResults.results.slice(0, 5)) {
+          webText += `• *${r.title}*\n  ${r.snippet.substring(0, 200)}\n`;
+          if (r.url) webText += `  ${r.url}\n`;
+          webText += '\n';
+        }
+        await memory.remember(userId, 'assistant', webText);
+        return { master: { response: webText }};
+
+      case 'READ_SHEET':
+        const sheetData = await google.quickReadSheet(
+          intent.params.spreadsheetId,
+          intent.params.range || 'Sheet1!A1:Z50'
+        );
+        if (!sheetData.success) {
+          return { master: { response: `❌ ${sheetData.error}` }};
+        }
+        let sheetText = `📊 *Sheet Data* (${sheetData.rowCount} rows):\n\`\`\`\n`;
+        for (const row of sheetData.values.slice(0, 20)) {
+          sheetText += row.join(' | ') + '\n';
+        }
+        sheetText += '```';
+        return { master: { response: sheetText }};
+
+      case 'REMEMBER':
+        await memory.store(intent.params.key, intent.params.value, 'user');
+        const rememberResponse = `✅ Remembered: *${intent.params.key}* = "${intent.params.value}"`;
+        await memory.remember(userId, 'assistant', rememberResponse);
+        return { master: { response: rememberResponse }};
+
+      case 'RECALL':
+        const recalled = await memory.retrieve(intent.params.key);
+        if (recalled.value) {
+          return { master: { response: `🧠 *${intent.params.key}:* ${recalled.value}` }};
+        }
+        return { master: { response: `🧠 I don't have anything stored for "${intent.params.key}"` }};
+
+      case 'HISTORY':
+        const history = await memory.recall(userId, 10);
+        if (!history.success || history.messages.length === 0) {
+          return { master: { response: `📜 No conversation history yet.` }};
+        }
+        let historyText = `📜 *Recent Conversation:*\n\n`;
+        for (const m of history.messages) {
+          const icon = m.role === 'user' ? '👤' : '🤖';
+          historyText += `${icon} ${m.content.substring(0, 100)}...\n`;
+        }
+        return { master: { response: historyText }};
 
       case 'ASK_AI':
         const askResults = await ai.askAll(intent.params.question, 'general');
@@ -642,7 +741,12 @@ app.post('/slack/commands', express.urlencoded({ extended: true }), async (req, 
         result = { consensus };
         break;
       case '/health':
-        result = { health: { ...ai.getProviderStatus(), github: github.isConfigured() } };
+        result = { health: {
+          ...ai.getProviderStatus(),
+          github: github.isConfigured(),
+          web: web.isConfigured(),
+          google: google.isConfigured()
+        }};
         break;
       case '/repos':
         result = { repos: await github.listRepos(20) };
@@ -690,7 +794,7 @@ app.post('/slack/commands', express.urlencoded({ extended: true }), async (req, 
         break;
       case '/do':
         // Master AI command - figures out what to do
-        result = await handleMasterCommand(content);
+        result = await handleMasterCommand(content, user_name);
         break;
       default:
         result = { error: 'Unknown command' };
@@ -720,7 +824,9 @@ function formatSlackResponse(command, result) {
   if (result.error) return `❌ ${result.error}`;
   if (result.health) {
     const h = result.health;
-    return `🏥 *Health:* Claude ${h.claude ? '✅' : '❌'} | GPT ${h.gpt ? '✅' : '❌'} | Gemini ${h.gemini ? '✅' : '❌'} | GitHub ${h.github ? '✅' : '❌'}`;
+    return `🏥 *System Status:*\n` +
+      `*AI:* Claude ${h.claude ? '✅' : '❌'} | GPT ${h.gpt ? '✅' : '❌'} | Gemini ${h.gemini ? '✅' : '❌'}\n` +
+      `*Services:* GitHub ${h.github ? '✅' : '❌'} | Web ${h.web ? '✅' : '❌'} | Google ${h.google ? '✅' : '❌'}`;
   }
   if (result.consensus) {
     return `🤝 *Consensus:*\n${result.consensus.response || 'No consensus'}`;
