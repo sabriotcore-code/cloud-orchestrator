@@ -918,102 +918,205 @@ Examples:
         }
 
       case 'EXECUTE_PLAN':
-        // For complex multi-step tasks - generate a plan and start executing
+        // ================================================================
+        // SMART EXECUTION: Investigate → Analyze → Plan → Auto-Execute
+        // ================================================================
         try {
           const task = intent.params.task || query;
+          let response = `🔍 *Investigating: ${task}*\n\n`;
 
-          // Get current repos and context
-          const repos = await github.listRepos(10);
-          const repoInfo = repos.map(r => `- ${r.name}: ${r.description || 'No description'}`).join('\n');
+          // ========== PHASE 1: INVESTIGATION ==========
+          // Determine which repo and files are relevant
+          const repoMatch = task.match(/\b(rei-dashboard|cloud-orchestrator|ai-orchestrator|rei-automation)\b/i);
+          const targetRepo = repoMatch ? repoMatch[1].toLowerCase() : 'rei-dashboard';
+          const targetOwner = 'sabriotcore-code';
+
+          response += `📂 *Target:* ${targetOwner}/${targetRepo}\n\n`;
+
+          // Read key files to understand the codebase
+          let investigationData = {};
+          let filesRead = [];
+
+          try {
+            // Get file list first
+            const allFiles = await github.listFiles(targetOwner, targetRepo, '');
+            const fileNames = allFiles.map(f => f.name).join(', ');
+            investigationData.structure = fileNames;
+            response += `📁 *Files found:* ${fileNames.substring(0, 200)}...\n`;
+
+            // Read main files based on what we find
+            const filesToRead = [];
+            for (const f of allFiles) {
+              if (['index.html', 'main.js', 'app.js', 'script.js', 'index.js', 'config.js', 'package.json'].includes(f.name)) {
+                filesToRead.push(f.name);
+              }
+            }
+
+            // Also check src/ or js/ folders
+            for (const f of allFiles) {
+              if (f.type === 'dir' && ['src', 'js', 'scripts', 'lib'].includes(f.name)) {
+                try {
+                  const subFiles = await github.listFiles(targetOwner, targetRepo, f.name);
+                  for (const sf of subFiles.slice(0, 5)) {
+                    if (sf.name.endsWith('.js') || sf.name.endsWith('.html')) {
+                      filesToRead.push(`${f.name}/${sf.name}`);
+                    }
+                  }
+                } catch (e) { /* ignore */ }
+              }
+            }
+
+            // Read up to 5 key files
+            for (const fileName of filesToRead.slice(0, 5)) {
+              try {
+                const fileContent = await github.readFile(targetOwner, targetRepo, fileName);
+                investigationData[fileName] = fileContent.content.substring(0, 3000);
+                filesRead.push(fileName);
+              } catch (e) { /* ignore */ }
+            }
+
+            response += `📖 *Read ${filesRead.length} files:* ${filesRead.join(', ')}\n\n`;
+          } catch (e) {
+            response += `⚠️ Could not read files: ${e.message}\n\n`;
+          }
+
+          // ========== PHASE 2: ANALYSIS ==========
+          response += `🧠 *Analyzing code...*\n\n`;
+
+          // Get master context for known issues
           const ctx = await context.getContextSummary();
 
-          // Ask Claude to generate an execution plan
-          const planPrompt = `You are an AI that can execute tasks via GitHub API and other integrations.
+          // Build analysis prompt with REAL code
+          const analysisPrompt = `You are a senior developer analyzing code to fix an issue.
 
 TASK: ${task}
 
-AVAILABLE REPOS:
-${repoInfo}
-
-CONTEXT:
+PROJECT CONTEXT:
 ${ctx}
 
-AVAILABLE ACTIONS I CAN EXECUTE:
-1. Create/update files in any repo (github.createOrUpdateFile)
-2. Create GitHub issues
-3. Read files
-4. Update master context
-5. Web search for information
+FILES I READ FROM ${targetOwner}/${targetRepo}:
+${Object.entries(investigationData).map(([name, content]) =>
+  `=== ${name} ===\n${content}\n`
+).join('\n')}
 
-Generate a CONCRETE execution plan with steps I can actually do. For each step, specify:
-- What API call to make
-- What parameters to use
-- What the expected outcome is
+Based on the ACTUAL CODE above:
+1. What is the specific problem?
+2. What exact changes need to be made?
+3. What are the file paths and line numbers?
 
-If the task requires things I CANNOT do (like access Railway admin, run local commands, access external services directly), explain what would need to be done manually.
-
-Return a JSON object:
+Return JSON:
 {
-  "canExecute": true/false,
-  "plan": [
-    {"step": 1, "action": "description", "automated": true/false},
-    ...
+  "diagnosis": "what the problem is based on the code",
+  "rootCause": "why this is happening",
+  "fixes": [
+    {
+      "file": "path/to/file.js",
+      "description": "what to change",
+      "oldCode": "the problematic code snippet",
+      "newCode": "the fixed code snippet",
+      "safe": true/false
+    }
   ],
-  "manualSteps": ["step that needs human action"],
-  "summary": "brief summary of what will happen"
+  "canAutoFix": true/false,
+  "manualSteps": ["anything requiring human action"]
 }`;
 
-          const planResult = await ai.askClaude(planPrompt, '');
+          const analysisResult = await ai.askClaude(analysisPrompt, '');
 
-          if (!planResult.success) {
-            return { master: { response: `❌ Failed to generate plan: ${planResult.error}` }};
+          if (!analysisResult.success) {
+            return { master: { response: response + `❌ Analysis failed: ${analysisResult.error}` }};
           }
 
-          let plan;
+          let analysis;
           try {
-            let jsonStr = planResult.response.trim();
+            let jsonStr = analysisResult.response.trim();
             if (jsonStr.startsWith('```')) {
               jsonStr = jsonStr.replace(/```json?\n?/g, '').replace(/```/g, '').trim();
             }
-            plan = JSON.parse(jsonStr);
+            analysis = JSON.parse(jsonStr);
           } catch (e) {
-            // Return the raw response if not JSON
-            return { master: { response: `📋 *Execution Plan for: ${task}*\n\n${planResult.response}` }};
+            // Return raw analysis if not JSON
+            return { master: { response: response + `📋 *Analysis:*\n${analysisResult.response}` }};
           }
 
-          // Format the plan nicely
-          let response = `📋 *Execution Plan: ${task}*\n\n`;
-          response += `*Summary:* ${plan.summary}\n\n`;
+          // ========== PHASE 3: PRESENT FINDINGS ==========
+          response += `*🔎 Diagnosis:* ${analysis.diagnosis}\n\n`;
+          response += `*🎯 Root Cause:* ${analysis.rootCause}\n\n`;
 
-          if (plan.plan && plan.plan.length > 0) {
-            response += `*Steps:*\n`;
-            for (const step of plan.plan) {
-              const icon = step.automated ? '🤖' : '👤';
-              response += `${icon} ${step.step}. ${step.action}\n`;
+          if (analysis.fixes && analysis.fixes.length > 0) {
+            response += `*🔧 Proposed Fixes:*\n`;
+            for (let i = 0; i < analysis.fixes.length; i++) {
+              const fix = analysis.fixes[i];
+              const safeIcon = fix.safe ? '✅' : '⚠️';
+              response += `${safeIcon} ${i + 1}. *${fix.file}*: ${fix.description}\n`;
+              if (fix.oldCode && fix.newCode) {
+                response += `   \`${fix.oldCode.substring(0, 50)}...\` → \`${fix.newCode.substring(0, 50)}...\`\n`;
+              }
             }
           }
 
-          if (plan.manualSteps && plan.manualSteps.length > 0) {
-            response += `\n*Manual Steps Required:*\n`;
-            for (const ms of plan.manualSteps) {
-              response += `👤 ${ms}\n`;
+          if (analysis.manualSteps && analysis.manualSteps.length > 0) {
+            response += `\n*👤 Manual Steps:*\n`;
+            for (const ms of analysis.manualSteps) {
+              response += `• ${ms}\n`;
             }
           }
 
-          if (plan.canExecute) {
-            response += `\n\n✅ *Reply "/do yes" to execute this plan*`;
+          // ========== PHASE 4: AUTO-EXECUTE SAFE FIXES ==========
+          if (analysis.canAutoFix && analysis.fixes) {
+            const safeFixes = analysis.fixes.filter(f => f.safe);
+
+            if (safeFixes.length > 0) {
+              response += `\n\n🚀 *Auto-executing ${safeFixes.length} safe fix(es)...*\n`;
+
+              for (const fix of safeFixes) {
+                try {
+                  // Read current file
+                  const currentFile = await github.readFile(targetOwner, targetRepo, fix.file);
+                  let newContent = currentFile.content;
+
+                  // Apply the fix
+                  if (fix.oldCode && fix.newCode) {
+                    newContent = newContent.replace(fix.oldCode, fix.newCode);
+                  } else if (fix.newCode) {
+                    newContent = fix.newCode;
+                  }
+
+                  // Commit the fix
+                  await github.createOrUpdateFile(
+                    targetOwner,
+                    targetRepo,
+                    fix.file,
+                    newContent,
+                    `Fix: ${fix.description}`,
+                    currentFile.sha
+                  );
+
+                  response += `✅ Fixed: ${fix.file}\n`;
+                } catch (e) {
+                  response += `❌ Failed ${fix.file}: ${e.message}\n`;
+                }
+              }
+
+              response += `\n🎉 *Done! Changes committed to ${targetRepo}.*`;
+              await context.updateContext('CURRENT WORK', `Fixed ${safeFixes.length} issues in ${targetRepo}`);
+            } else {
+              response += `\n\n⚠️ *No safe auto-fixes available. Review needed.*`;
+
+              // Store for manual confirmation
+              await memory.store(`plan_${userId}`, JSON.stringify(analysis), 'plans');
+              await memory.store(`pending_${userId}`, 'PLAN', 'state');
+              response += `\n✅ *Reply "/do yes" to apply risky fixes*`;
+            }
           } else {
-            response += `\n\n⚠️ *This plan requires manual steps. See above for details.*`;
+            response += `\n\n⚠️ *Manual review required before applying fixes.*`;
+            await memory.store(`plan_${userId}`, JSON.stringify(analysis), 'plans');
+            await memory.store(`pending_${userId}`, 'PLAN', 'state');
+            response += `\n✅ *Reply "/do yes" to proceed*`;
           }
 
-          // Store the plan in memory for potential execution
-          await memory.store(`plan_${userId}`, JSON.stringify(plan), 'plans');
-
-          // SET PENDING STATE - so we know "yes" is a confirmation
-          await memory.store(`pending_${userId}`, 'PLAN', 'state');
-
-          // Store this response so we have context - include plan summary
-          const planSummary = `I showed a plan to: ${task}\n\nSummary: ${plan.summary}\n\nSteps: ${(plan.plan || []).map(s => s.action).join('; ')}`;
+          // Store context
+          const planSummary = `Investigated ${targetRepo}: ${analysis.diagnosis}. Fixes: ${(analysis.fixes || []).map(f => f.description).join('; ')}`;
           await memory.store(`last_response_${userId}`, planSummary.substring(0, 1500), 'context');
 
           return { master: { response }};
