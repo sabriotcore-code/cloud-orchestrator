@@ -1012,8 +1012,9 @@ Return a JSON object:
           // SET PENDING STATE - so we know "yes" is a confirmation
           await memory.store(`pending_${userId}`, 'PLAN', 'state');
 
-          // Store this response so we have context
-          await memory.store(`last_response_${userId}`, response.substring(0, 500), 'context');
+          // Store this response so we have context - include plan summary
+          const planSummary = `I showed a plan to: ${task}\n\nSummary: ${plan.summary}\n\nSteps: ${(plan.plan || []).map(s => s.action).join('; ')}`;
+          await memory.store(`last_response_${userId}`, planSummary.substring(0, 1500), 'context');
 
           return { master: { response }};
         } catch (e) {
@@ -1099,28 +1100,52 @@ Return a JSON object:
         }
 
       case 'ASK_AI':
-        // Check if question is about projects/repos - if so, include real data
+        // ALWAYS include conversation context so AI knows what we're discussing
         const questionLower = (intent.params.question || '').toLowerCase();
-        let enrichedQuestion = intent.params.question;
 
+        // Build rich context for the AI
+        let contextForAI = '';
+
+        // Include last response (the plan that was just shown, etc.)
+        if (lastBotResponse) {
+          contextForAI += `=== MY PREVIOUS RESPONSE ===\n${lastBotResponse}\n\n`;
+        }
+
+        // Include conversation history
+        if (conversationContext) {
+          contextForAI += `=== RECENT CONVERSATION ===\n${conversationContext}\n\n`;
+        }
+
+        // Include master context
+        const aiMasterContext = await context.getContextSummary();
+        if (aiMasterContext) {
+          contextForAI += `=== PROJECT KNOWLEDGE ===\n${aiMasterContext}\n\n`;
+        }
+
+        // For project/repo questions, also include real GitHub data
         if (questionLower.includes('project') || questionLower.includes('repo') ||
             questionLower.includes('what do') || questionLower.includes('what are')) {
-          // Fetch real repo data to include in the question
           try {
             const repos = await github.listRepos(10);
             const repoInfo = repos.map(r => `- ${r.name}: ${r.description || 'No description'}`).join('\n');
-
-            // Get master context
-            const ctx = await context.getContextSummary();
-
-            enrichedQuestion = `${intent.params.question}\n\nHere is the REAL data from GitHub and my knowledge base:\n\n=== REPOS ===\n${repoInfo}\n\n=== CONTEXT ===\n${ctx}\n\nUse this REAL data to answer accurately. Do not say you cannot access GitHub - the data is provided above.`;
+            contextForAI += `=== GITHUB REPOS ===\n${repoInfo}\n\n`;
           } catch (e) {
-            console.log('[ASK_AI] Could not enrich with repo data:', e.message);
+            console.log('[ASK_AI] Could not get repo data:', e.message);
           }
         }
 
+        // Build the enriched question with full context
+        const enrichedQuestion = contextForAI
+          ? `${contextForAI}=== USER'S QUESTION ===\n${intent.params.question}\n\nIMPORTANT: Use the context above to answer. You have full access to our conversation history and project knowledge.`
+          : intent.params.question;
+
         const askResults = await ai.askAll(enrichedQuestion, 'general');
         const consensus = await ai.buildConsensus(askResults, 'weighted');
+
+        // Store this response for future context
+        const aiResponse = consensus.response.substring(0, 500);
+        await memory.store(`last_response_${userId}`, aiResponse, 'context');
+
         return { master: {
           response: `🤖 *AI Consensus:*\n${consensus.response}\n\n` +
             `_Sources: ${consensus.sources?.join(', ') || consensus.winner}_`
