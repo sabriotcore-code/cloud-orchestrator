@@ -1194,21 +1194,23 @@ Examples:
             investigationData.structure = fileNames;
             response += `📁 *Files found:* ${fileNames.substring(0, 200)}...\n`;
 
-            // Read main files based on what we find
+            // Read main files based on what we find - be more aggressive
             const filesToRead = [];
             for (const f of allFiles) {
-              if (['index.html', 'main.js', 'app.js', 'script.js', 'index.js', 'config.js', 'package.json'].includes(f.name)) {
+              // Include all HTML, JS, CSS, and config files
+              if (f.name.endsWith('.html') || f.name.endsWith('.js') ||
+                  f.name.endsWith('.css') || f.name.endsWith('.json')) {
                 filesToRead.push(f.name);
               }
             }
 
-            // Also check src/ or js/ folders
+            // Also check src/, js/, scripts/, css/ folders
             for (const f of allFiles) {
-              if (f.type === 'dir' && ['src', 'js', 'scripts', 'lib'].includes(f.name)) {
+              if (f.type === 'dir' && ['src', 'js', 'scripts', 'lib', 'css', 'styles', 'assets'].includes(f.name)) {
                 try {
                   const subFiles = await github.listFiles(targetOwner, targetRepo, f.name);
-                  for (const sf of subFiles.slice(0, 5)) {
-                    if (sf.name.endsWith('.js') || sf.name.endsWith('.html')) {
+                  for (const sf of subFiles) {
+                    if (sf.name.endsWith('.js') || sf.name.endsWith('.html') || sf.name.endsWith('.css')) {
                       filesToRead.push(`${f.name}/${sf.name}`);
                     }
                   }
@@ -1216,11 +1218,12 @@ Examples:
               }
             }
 
-            // Read up to 5 key files
-            for (const fileName of filesToRead.slice(0, 5)) {
+            // Read up to 10 key files with more content (8000 chars each)
+            for (const fileName of filesToRead.slice(0, 10)) {
               try {
                 const fileContent = await github.readFile(targetOwner, targetRepo, fileName);
-                investigationData[fileName] = fileContent.content.substring(0, 3000);
+                // Read up to 8000 chars per file (enough for most files)
+                investigationData[fileName] = fileContent.content.substring(0, 8000);
                 filesRead.push(fileName);
               } catch (e) { /* ignore */ }
             }
