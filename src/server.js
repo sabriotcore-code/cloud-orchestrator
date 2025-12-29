@@ -504,7 +504,7 @@ app.post('/slack/commands', express.urlencoded({ extended: true }), async (req, 
         result = { consensus };
         break;
       case '/health':
-        result = { health: ai.getProviderStatus() };
+        result = { health: { ...ai.getProviderStatus(), github: github.isConfigured() } };
         break;
       default:
         result = { error: 'Unknown command' };
@@ -534,7 +534,7 @@ function formatSlackResponse(command, result) {
   if (result.error) return `❌ ${result.error}`;
   if (result.health) {
     const h = result.health;
-    return `🏥 *Health:* Claude ${h.claude ? '✅' : '❌'} | GPT ${h.gpt ? '✅' : '❌'} | Gemini ${h.gemini ? '✅' : '❌'}`;
+    return `🏥 *Health:* Claude ${h.claude ? '✅' : '❌'} | GPT ${h.gpt ? '✅' : '❌'} | Gemini ${h.gemini ? '✅' : '❌'} | GitHub ${h.github ? '✅' : '❌'}`;
   }
   if (result.consensus) {
     return `🤝 *Consensus:*\n${result.consensus.response || 'No consensus'}`;
