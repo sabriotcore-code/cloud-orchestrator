@@ -11,6 +11,7 @@ import * as ai from './services/ai.js';
 import * as github from './services/github.js';
 import * as web from './services/web.js';
 import * as google from './services/google.js';
+import * as googleAI from './services/google-ai.js';
 import * as memory from './services/memory.js';
 import * as context from './services/context.js';
 import * as changelog from './services/changelog.js';
@@ -808,11 +809,43 @@ async function handleMasterCommand(query, userId = 'default') {
   }
 
   // ============================================================
+  // FORCE & BATCH MODE - Bypass confirmations
+  // ============================================================
+  const normalizedUserId = usernameToId(userId);
+
+  // Check for --force flag
+  const hasForceFlag = query.includes('--force') || query.includes('-f');
+  let cleanQuery = query.replace(/\s*(--force|-f)\s*/g, ' ').trim();
+
+  // Check for batch mode commands
+  const batchMatch = cleanQuery.match(/^batch\s+(on|off|status)$/i);
+  if (batchMatch) {
+    const batchAction = batchMatch[1].toLowerCase();
+    if (batchAction === 'on') {
+      await memory.store(`batch_mode_${normalizedUserId}`, 'true', 'settings');
+      return { master: { response: `🚀 *Batch Mode ENABLED*\n\nAll confirmations will be auto-approved.\nRisky file warnings will be logged but not block execution.\n\n⚠️ Use with caution! Run \`batch off\` when done.` }};
+    } else if (batchAction === 'off') {
+      await memory.store(`batch_mode_${normalizedUserId}`, '', 'settings');
+      return { master: { response: `🛡️ *Batch Mode DISABLED*\n\nNormal confirmation flow restored.` }};
+    } else {
+      const batchState = await memory.retrieve(`batch_mode_${normalizedUserId}`);
+      return { master: { response: `📊 *Batch Mode:* ${batchState.value ? 'ON 🚀' : 'OFF 🛡️'}` }};
+    }
+  }
+
+  // Check if batch mode is active
+  const batchModeState = await memory.retrieve(`batch_mode_${normalizedUserId}`);
+  const isBatchMode = batchModeState.value === 'true';
+  const forceMode = hasForceFlag || isBatchMode;
+
+  // Use cleaned query for further processing
+  query = cleanQuery;
+
+  // ============================================================
   // SMART CONTEXT SYSTEM - Makes the bot context-aware like Claude Code
   // ============================================================
 
   // Get pending state (was there a plan just shown?) - use normalized userId
-  const normalizedUserId = usernameToId(userId);
   const pendingState = await memory.retrieve(`pending_${normalizedUserId}`);
   const lastResponse = await memory.retrieve(`last_response_${normalizedUserId}`);
 
@@ -890,9 +923,155 @@ async function handleMasterCommand(query, userId = 'default') {
       ...ai.getProviderStatus(),
       github: github.isConfigured(),
       web: web.isConfigured(),
-      google: google.isConfigured()
+      google: google.isConfigured(),
+      googleAI: googleAI.getStatus()
     };
     return { health };
+  }
+
+  // ============================================================
+  // GOOGLE AI COMMANDS - Smart AI features
+  // ============================================================
+
+  // Semantic code search: "search for error handling code"
+  if (queryLower.startsWith('search ') || queryLower.startsWith('find code ') || queryLower.startsWith('semantic ')) {
+    const searchQuery = query.replace(/^(search|find code|semantic)\s+(for\s+)?/i, '').trim();
+    try {
+      // Get repo files to search
+      const repoMatch = searchQuery.match(/in\s+(\S+)/);
+      const targetRepo = repoMatch ? repoMatch[1] : 'cloud-orchestrator';
+      const cleanQuery = searchQuery.replace(/in\s+\S+/i, '').trim();
+
+      const files = await github.listRepoFiles('sabriotcore-code', targetRepo);
+      const codeFiles = files.filter(f => /\.(js|ts|jsx|tsx|py|go|rs)$/.test(f.path)).slice(0, 20);
+
+      // Read and index files
+      const fileContents = await Promise.all(
+        codeFiles.map(async f => {
+          try {
+            const content = await github.readFile('sabriotcore-code', targetRepo, f.path);
+            return { path: f.path, content: content.content };
+          } catch (e) {
+            return null;
+          }
+        })
+      );
+
+      const validFiles = fileContents.filter(f => f && f.content);
+
+      // Semantic search
+      const searchItems = validFiles.map(f => ({
+        id: f.path,
+        text: f.content.substring(0, 2000),
+        metadata: { path: f.path }
+      }));
+
+      const results = await googleAI.semanticSearch(cleanQuery, searchItems, 5);
+
+      let response = `🔍 *Semantic Search Results for:* "${cleanQuery}"\n\n`;
+      for (const result of results) {
+        response += `📁 \`${result.id}\` (${Math.round(result.score * 100)}% match)\n`;
+      }
+
+      return { master: { response }};
+    } catch (e) {
+      return { master: { response: `❌ Search failed: ${e.message}` }};
+    }
+  }
+
+  // Code review: "review src/services/slack.js"
+  if (queryLower.startsWith('review ')) {
+    const filePath = query.replace(/^review\s+/i, '').trim();
+    try {
+      const pathParts = filePath.split('/');
+      const repo = pathParts[0] || 'cloud-orchestrator';
+      const path = pathParts.slice(1).join('/') || filePath;
+
+      const file = await github.readFile('sabriotcore-code', repo, path);
+      const review = await googleAI.reviewCode(file.content);
+
+      let response = `📝 *Code Review: ${path}*\n\n`;
+      response += `⭐ *Score:* ${review.overallScore}/10\n\n`;
+
+      if (review.bugs?.length > 0) {
+        response += `🐛 *Bugs:*\n`;
+        for (const bug of review.bugs.slice(0, 5)) {
+          response += `• L${bug.line}: [${bug.severity}] ${bug.description}\n`;
+        }
+        response += '\n';
+      }
+
+      if (review.security?.length > 0) {
+        response += `🔒 *Security:*\n`;
+        for (const sec of review.security.slice(0, 3)) {
+          response += `• L${sec.line}: ${sec.description}\n`;
+        }
+        response += '\n';
+      }
+
+      if (review.improvements?.length > 0) {
+        response += `💡 *Improvements:*\n`;
+        for (const imp of review.improvements.slice(0, 5)) {
+          response += `• ${imp}\n`;
+        }
+      }
+
+      return { master: { response }};
+    } catch (e) {
+      return { master: { response: `❌ Review failed: ${e.message}` }};
+    }
+  }
+
+  // Generate code: "generate a function to validate emails"
+  if (queryLower.startsWith('generate ') || queryLower.startsWith('write code ') || queryLower.startsWith('create code ')) {
+    const description = query.replace(/^(generate|write code|create code)\s+/i, '').trim();
+    try {
+      const code = await googleAI.generateCode(description);
+      return { master: { response: `🔨 *Generated Code:*\n\n${code}` }};
+    } catch (e) {
+      return { master: { response: `❌ Generation failed: ${e.message}` }};
+    }
+  }
+
+  // Summarize: "summarize the README"
+  if (queryLower.startsWith('summarize ')) {
+    const target = query.replace(/^summarize\s+/i, '').trim();
+    try {
+      // Check if it's a URL or file
+      if (target.startsWith('http')) {
+        const result = await googleAI.fetchAndAnalyze(target, 'Provide a comprehensive summary');
+        return { master: { response: `📄 *Summary of ${target}:*\n\n${result.answer || result.error}` }};
+      } else {
+        const file = await github.readFile('sabriotcore-code', 'cloud-orchestrator', target);
+        const summary = await googleAI.summarizeDocument(file.content, 'bullets');
+        return { master: { response: `📄 *Summary of ${target}:*\n\n${summary}` }};
+      }
+    } catch (e) {
+      return { master: { response: `❌ Summary failed: ${e.message}` }};
+    }
+  }
+
+  // Intent check: "intent: what does user want"
+  if (queryLower.startsWith('intent:') || queryLower.startsWith('classify ')) {
+    const text = query.replace(/^(intent:|classify)\s*/i, '').trim();
+    try {
+      const intent = await googleAI.classifyIntent(text);
+      return { master: { response: `🎯 *Intent Classification:*\n\n• Intent: \`${intent.intent}\`\n• Confidence: ${Math.round(intent.confidence * 100)}%\n• Summary: ${intent.summary}\n• Entities: ${JSON.stringify(intent.entities)}` }};
+    } catch (e) {
+      return { master: { response: `❌ Classification failed: ${e.message}` }};
+    }
+  }
+
+  // Sentiment analysis: "sentiment: user feedback text"
+  if (queryLower.startsWith('sentiment:') || queryLower.startsWith('analyze sentiment ')) {
+    const text = query.replace(/^(sentiment:|analyze sentiment)\s*/i, '').trim();
+    try {
+      const sentiment = await googleAI.analyzeSentiment(text);
+      const emoji = sentiment.score > 0.2 ? '😊' : sentiment.score < -0.2 ? '😟' : '😐';
+      return { master: { response: `${emoji} *Sentiment Analysis:*\n\n• Label: ${sentiment.label}\n• Score: ${sentiment.score.toFixed(2)} (-1 to 1)\n• Magnitude: ${sentiment.magnitude.toFixed(2)}` }};
+    } catch (e) {
+      return { master: { response: `❌ Sentiment analysis failed: ${e.message}` }};
+    }
   }
 
   // History shortcut: "history", "history rei-dashboard", "show changes"
@@ -1258,8 +1437,8 @@ Examples:
           const isLargeDeletion = existingContent &&
             (commitContent.length < existingContent.length * 0.5); // More than 50% reduction
 
-          // If risky, ask for confirmation (unless already confirmed)
-          if ((isRisky || isLargeDeletion) && !intent.params.confirmed) {
+          // If risky, ask for confirmation (unless already confirmed OR forceMode is active)
+          if ((isRisky || isLargeDeletion) && !intent.params.confirmed && !forceMode) {
             const riskWarnings = [];
             if (isRisky) riskWarnings.push(`⚠️ \`${commitPath}\` is a critical file`);
             if (isLargeDeletion) riskWarnings.push(`⚠️ This removes ${Math.round((1 - commitContent.length/existingContent.length) * 100)}% of the file content`);
@@ -1276,7 +1455,12 @@ Examples:
 
             await memory.store(`pending_${usernameToId(userId)}`, 'COMMIT', 'state');
 
-            return { master: { response: `🛡️ *Risky Change Detected*\n\n${riskWarnings.join('\n')}\n\n📁 File: \`${commitPath}\`\n📦 Repo: ${commitOwner}/${commitRepo}\n\n**Reply "yes" or "confirm" to proceed, or "no" to cancel.**` }};
+            return { master: { response: `🛡️ *Risky Change Detected*\n\n${riskWarnings.join('\n')}\n\n📁 File: \`${commitPath}\`\n📦 Repo: ${commitOwner}/${commitRepo}\n\n**Reply "yes" or "confirm" to proceed, or "no" to cancel.**\n\n_Tip: Use \`--force\` or \`batch on\` to skip confirmations._` }};
+          }
+
+          // Log if force mode bypassed a risky check
+          if ((isRisky || isLargeDeletion) && forceMode) {
+            console.log(`[FORCE MODE] Bypassed risk check for ${commitPath} (user: ${userId})`);
           }
 
           const result = await github.createOrUpdateFile(
@@ -1501,14 +1685,18 @@ Return JSON:
             }
           }
 
-          // ========== PHASE 4: AUTO-EXECUTE SAFE FIXES ==========
+          // ========== PHASE 4: AUTO-EXECUTE FIXES (FORCE MODE = ALL) ==========
           if (analysis.canAutoFix && analysis.fixes) {
-            const safeFixes = analysis.fixes.filter(f => f.safe);
+            // In force mode, execute ALL fixes (safe + risky). Otherwise, only safe ones.
+            const fixesToApply = forceMode
+              ? analysis.fixes
+              : analysis.fixes.filter(f => f.safe);
 
-            if (safeFixes.length > 0) {
-              response += `\n\n🚀 *Auto-executing ${safeFixes.length} safe fix(es)...*\n`;
+            if (fixesToApply.length > 0) {
+              const modeLabel = forceMode ? '🚀 FORCE MODE' : '🔧 Safe';
+              response += `\n\n${modeLabel} *Auto-executing ${fixesToApply.length} fix(es)...*\n`;
 
-              for (const fix of safeFixes) {
+              for (const fix of fixesToApply) {
                 try {
                   // Read current file
                   const currentFile = await github.readFile(targetOwner, targetRepo, fix.file);
@@ -1531,15 +1719,15 @@ Return JSON:
                     currentFile.sha
                   );
 
-                  response += `✅ Fixed: ${fix.file}\n`;
+                  response += `✅ Fixed: ${fix.file}${!fix.safe && forceMode ? ' ⚡' : ''}\n`;
                 } catch (e) {
                   response += `❌ Failed ${fix.file}: ${e.message}\n`;
                 }
               }
 
               response += `\n🎉 *Done! Changes committed to ${targetRepo}.*`;
-              await context.updateContext('CURRENT WORK', `Fixed ${safeFixes.length} issues in ${targetRepo}`);
-            } else {
+              await context.updateContext('CURRENT WORK', `Fixed ${fixesToApply.length} issues in ${targetRepo}`);
+            } else if (!forceMode) {
               response += `\n\n⚠️ *No safe auto-fixes available. Review needed.*`;
 
               // Store for manual confirmation - include owner/repo info
@@ -1551,9 +1739,9 @@ Return JSON:
               const storeResult = await memory.store(`plan_${usernameToId(userId)}`, JSON.stringify(planToStore), 'plans');
               const stateResult = await memory.store(`pending_${usernameToId(userId)}`, 'PLAN', 'state');
               console.log(`[Plan] Stored plan for ${usernameToId(userId)}: ${storeResult.success}, state: ${stateResult.success}`);
-              response += `\n✅ *Reply "/do yes" to apply risky fixes*`;
+              response += `\n✅ *Reply "/do yes" to apply risky fixes, or use \`--force\` to skip confirmation*`;
             }
-          } else {
+          } else if (!forceMode) {
             response += `\n\n⚠️ *Manual review required before applying fixes.*`;
             // Store for manual confirmation - include owner/repo info
             const planToStore = {
@@ -1564,7 +1752,7 @@ Return JSON:
             const storeResult = await memory.store(`plan_${usernameToId(userId)}`, JSON.stringify(planToStore), 'plans');
             const stateResult = await memory.store(`pending_${usernameToId(userId)}`, 'PLAN', 'state');
             console.log(`[Plan] Stored plan for ${usernameToId(userId)}: ${storeResult.success}, state: ${stateResult.success}`);
-            response += `\n✅ *Reply "/do yes" to proceed*`;
+            response += `\n✅ *Reply "/do yes" to proceed, or use \`--force\` to skip confirmation*`;
           }
 
           // Store context
