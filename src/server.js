@@ -1383,13 +1383,17 @@ Return JSON:
           let analysis;
           try {
             let jsonStr = analysisResult.response.trim();
-            if (jsonStr.startsWith('```')) {
+            // Extract JSON from response - handle preamble text before JSON
+            const jsonMatch = jsonStr.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+              jsonStr = jsonMatch[0];
+            } else if (jsonStr.startsWith('```')) {
               jsonStr = jsonStr.replace(/```json?\n?/g, '').replace(/```/g, '').trim();
             }
             analysis = JSON.parse(jsonStr);
           } catch (e) {
-            // Return raw analysis if not JSON
-            return { master: { response: response + `📋 *Analysis:*\n${analysisResult.response}` }};
+            // Return summary if JSON parsing fails - don't dump raw response
+            return { master: { response: response + `📋 *Analysis:* Could not parse structured response. Try being more specific about the issue.\n\n_Raw: ${analysisResult.response.substring(0, 500)}..._` }};
           }
 
           // ========== PHASE 3: PRESENT FINDINGS ==========
@@ -1400,10 +1404,15 @@ Return JSON:
             response += `*🔧 Proposed Fixes:*\n`;
             for (let i = 0; i < analysis.fixes.length; i++) {
               const fix = analysis.fixes[i];
+              // Large changes (>500 chars) are never safe
+              const isLargeChange = fix.newCode && fix.newCode.length > 500;
+              if (isLargeChange) fix.safe = false;
+
               const safeIcon = fix.safe ? '✅' : '⚠️';
-              response += `${safeIcon} ${i + 1}. *${fix.file}*: ${fix.description}\n`;
+              const sizeNote = isLargeChange ? ` (${fix.newCode.length} chars)` : '';
+              response += `${safeIcon} ${i + 1}. *${fix.file}*: ${fix.description}${sizeNote}\n`;
               if (fix.oldCode && fix.newCode) {
-                response += `   \`${fix.oldCode.substring(0, 50)}...\` → \`${fix.newCode.substring(0, 50)}...\`\n`;
+                response += `   \`${fix.oldCode.substring(0, 40)}...\` → \`${fix.newCode.substring(0, 40)}...\`\n`;
               }
             }
           }
@@ -1471,6 +1480,14 @@ Return JSON:
           // Store context
           const planSummary = `Investigated ${targetRepo}: ${analysis.diagnosis}. Fixes: ${(analysis.fixes || []).map(f => f.description).join('; ')}`;
           await memory.store(`last_response_${userId}`, planSummary.substring(0, 1500), 'context');
+
+          // Ensure response isn't too long for Slack (keep confirmation visible)
+          const maxLen = 2500;
+          if (response.length > maxLen) {
+            // Truncate middle, keep start and end (confirmation prompt)
+            const lastPart = response.slice(-400); // Keep confirmation prompt
+            response = response.substring(0, maxLen - 450) + '\n\n_... (truncated for Slack) ..._\n\n' + lastPart;
+          }
 
           return { master: { response }};
         } catch (e) {
