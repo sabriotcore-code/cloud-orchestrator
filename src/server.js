@@ -13,6 +13,7 @@ import * as web from './services/web.js';
 import * as google from './services/google.js';
 import * as memory from './services/memory.js';
 import * as context from './services/context.js';
+import * as changelog from './services/changelog.js';
 import { initSlack, slackApp } from './services/slack.js';
 
 const app = express();
@@ -757,6 +758,29 @@ async function handleMasterCommand(query, userId = 'default') {
     if (pendingState.value === 'PLAN') {
       // Execute the stored plan
       return await executePendingPlan(userId);
+    } else if (pendingState.value === 'COMMIT') {
+      // Execute the pending commit
+      const pendingCommit = await memory.retrieve(`pending_commit_${userId}`);
+      if (pendingCommit.value) {
+        try {
+          const commit = JSON.parse(pendingCommit.value);
+          const result = await github.createOrUpdateFile(
+            commit.owner,
+            commit.repo,
+            commit.path,
+            commit.content,
+            commit.message,
+            commit.sha,
+            userId
+          );
+          await memory.store(`pending_commit_${userId}`, '', 'pending');
+          await context.updateContext('CURRENT WORK', `Committed ${commit.path} to ${commit.repo}`);
+          return { master: { response: `✅ *File Committed!*\n📁 \`${commit.path}\`\n📦 Repo: ${commit.owner}/${commit.repo}\n📝 Message: ${commit.message}\n🔗 ${result.content?.html_url || 'Commit successful'}\n\n_Use /history to see changes. Use /rollback to undo._` }};
+        } catch (e) {
+          return { master: { response: `❌ Commit failed: ${e.message}` }};
+        }
+      }
+      return { master: { response: `❌ No pending commit found.` }};
     } else if (pendingState.value === 'CONFIRM') {
       // Generic confirmation - execute whatever was pending
       return { master: { response: `✅ Confirmed! Proceeding with the action.` }};
@@ -1090,7 +1114,7 @@ Examples:
       // ================== EXECUTABLE ACTIONS ==================
 
       case 'COMMIT_FILE':
-        // Create or update a file in a repo
+        // Create or update a file in a repo - WITH RISK CHECK
         try {
           const commitOwner = intent.params.owner || 'sabriotcore-code';
           const commitRepo = intent.params.repo;
@@ -1102,13 +1126,43 @@ Examples:
             return { master: { response: `❌ Missing required params. Need: repo, path, content` }};
           }
 
-          // Try to get existing file SHA (for updates)
+          // RISK CHECK - detect risky changes
+          const riskyFiles = ['package.json', '.env', 'server.js', 'index.js', 'config.js', 'database.js'];
+          const isRiskyFile = riskyFiles.some(f => commitPath.endsWith(f));
+
+          // Check if we're deleting a lot of content
+          let existingContent = null;
           let existingSha = null;
           try {
             const existing = await github.readFile(commitOwner, commitRepo, commitPath);
             existingSha = existing.sha;
+            existingContent = existing.content;
           } catch (e) {
             // File doesn't exist, that's fine for creating
+          }
+
+          const isLargeDeletion = existingContent &&
+            (commitContent.length < existingContent.length * 0.5); // More than 50% reduction
+
+          // If risky, ask for confirmation (unless already confirmed)
+          if ((isRiskyFile || isLargeDeletion) && !intent.params.confirmed) {
+            const riskWarnings = [];
+            if (isRiskyFile) riskWarnings.push(`⚠️ \`${commitPath}\` is a critical file`);
+            if (isLargeDeletion) riskWarnings.push(`⚠️ This removes ${Math.round((1 - commitContent.length/existingContent.length) * 100)}% of the file content`);
+
+            // Store pending change for confirmation
+            await memory.store(`pending_commit_${usernameToId(userId)}`, JSON.stringify({
+              owner: commitOwner,
+              repo: commitRepo,
+              path: commitPath,
+              content: commitContent,
+              message: commitMessage,
+              sha: existingSha
+            }), 'pending');
+
+            await memory.store(`pending_${usernameToId(userId)}`, 'COMMIT', 'state');
+
+            return { master: { response: `🛡️ *Risky Change Detected*\n\n${riskWarnings.join('\n')}\n\n📁 File: \`${commitPath}\`\n📦 Repo: ${commitOwner}/${commitRepo}\n\n**Reply "yes" or "confirm" to proceed, or "no" to cancel.**` }};
           }
 
           const result = await github.createOrUpdateFile(
@@ -1117,12 +1171,13 @@ Examples:
             commitPath,
             commitContent,
             commitMessage,
-            existingSha
+            existingSha,
+            userId || 'bot'
           );
 
           await context.updateContext('CURRENT WORK', `Committed ${commitPath} to ${commitRepo}`);
 
-          return { master: { response: `✅ *File Committed!*\n📁 \`${commitPath}\`\n📦 Repo: ${commitOwner}/${commitRepo}\n📝 Message: ${commitMessage}\n🔗 ${result.content?.html_url || 'Commit successful'}` }};
+          return { master: { response: `✅ *File Committed!*\n📁 \`${commitPath}\`\n📦 Repo: ${commitOwner}/${commitRepo}\n📝 Message: ${commitMessage}\n🔗 ${result.content?.html_url || 'Commit successful'}\n\n_Use /history ${commitOwner}/${commitRepo} to see changes. Use /rollback to undo._` }};
         } catch (e) {
           return { master: { response: `❌ Failed to commit: ${e.message}` }};
         }
@@ -1808,6 +1863,63 @@ app.post('/slack/commands', express.urlencoded({ extended: true }), async (req, 
           result = { error: 'Usage: /codesearch <query>' };
         } else {
           result = { search: await github.searchCode(content, 10), query: content };
+        }
+        break;
+      case '/history':
+        // Show recent changes made by the bot
+        const historyMatch = content.match(/^([^\/]+)\/([^\s]+)/);
+        if (!historyMatch) {
+          result = { error: 'Usage: /history owner/repo' };
+        } else {
+          const [, hOwner, hRepo] = historyMatch;
+          const changes = await github.getChangeHistory(hOwner, hRepo, 10);
+          result = {
+            history: github.formatChangeHistory(changes),
+            repo: `${hOwner}/${hRepo}`,
+            count: changes.length
+          };
+        }
+        break;
+      case '/rollback':
+        // Rollback a file to previous version
+        if (!content) {
+          result = { error: 'Usage: /rollback owner/repo path/to/file [changeId]\nUse /history to see available changes' };
+        } else {
+          const parts = content.trim().split(/\s+/);
+          const repoArg = parts[0];
+          const fileArg = parts[1];
+          const changeIdArg = parts[2];
+
+          if (!repoArg || !repoArg.includes('/')) {
+            result = { error: 'Usage: /rollback owner/repo path/to/file [changeId]' };
+          } else {
+            const [rOwner, rRepo] = repoArg.split('/');
+            try {
+              if (changeIdArg) {
+                // Execute rollback
+                await github.rollbackFile(rOwner, rRepo, fileArg, changeIdArg, user_name);
+                result = { success: true, message: `Rolled back ${fileArg} successfully` };
+              } else if (fileArg) {
+                // Show available versions for this file
+                const rollbackInfo = await github.getChangeHistory(rOwner, rRepo, 20);
+                const fileChanges = rollbackInfo.filter(c => c.path === fileArg && c.oldContent);
+                result = {
+                  file: fileArg,
+                  versions: fileChanges.slice(0, 5).map(c => `• \`${c.id}\` - ${c.message} (${new Date(c.timestamp).toLocaleString()})`).join('\n'),
+                  usage: 'Use /rollback owner/repo file changeId to restore'
+                };
+              } else {
+                // Show all recent changes
+                const changes = await github.getChangeHistory(rOwner, rRepo, 10);
+                result = {
+                  changes: github.formatChangeHistory(changes),
+                  usage: 'Use /rollback owner/repo file changeId to restore'
+                };
+              }
+            } catch (e) {
+              result = { error: e.message };
+            }
+          }
         }
         break;
       case '/do':

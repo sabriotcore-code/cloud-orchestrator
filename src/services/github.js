@@ -1,8 +1,11 @@
 import dotenv from 'dotenv';
 dotenv.config();
 
+import * as changelog from './changelog.js';
+
 // ============================================================================
 // GITHUB API SERVICE
+// Bot-owned code architecture - all changes tracked and rollbackable
 // ============================================================================
 
 const GITHUB_API = 'https://api.github.com';
@@ -125,15 +128,30 @@ export async function getCommits(owner, repo, perPage = 10) {
   }));
 }
 
-// Create or update a file (commit)
-export async function createOrUpdateFile(owner, repo, path, content, message, sha = null) {
+// Create or update a file (commit) - WITH CHANGE TRACKING
+export async function createOrUpdateFile(owner, repo, path, content, message, sha = null, userId = 'bot') {
+  const fullRepo = `${owner}/${repo}`;
+  let oldContent = null;
+  let actualSha = sha;
+
+  // ALWAYS get latest SHA to prevent conflicts (Bot Owns Code architecture)
+  try {
+    const existing = await readFile(owner, repo, path);
+    actualSha = existing.sha;
+    oldContent = existing.content;
+  } catch (e) {
+    // File doesn't exist yet - this is a create
+    actualSha = null;
+    oldContent = null;
+  }
+
   const body = {
-    message,
+    message: `${message}\n\n[Bot: AI Orchestrator]`,
     content: Buffer.from(content).toString('base64'),
   };
 
-  if (sha) {
-    body.sha = sha; // Required for updates
+  if (actualSha) {
+    body.sha = actualSha;
   }
 
   const response = await fetch(`${GITHUB_API}/repos/${owner}/${repo}/contents/${path}`, {
@@ -147,7 +165,43 @@ export async function createOrUpdateFile(owner, repo, path, content, message, sh
     throw new Error(`GitHub API error: ${error.message}`);
   }
 
-  return response.json();
+  const result = await response.json();
+
+  // Log the change for history/rollback
+  await changelog.logChange({
+    repo: fullRepo,
+    path,
+    action: oldContent ? 'update' : 'create',
+    oldContent,
+    newContent: content,
+    message,
+    userId,
+    commitSha: result.commit?.sha?.substring(0, 7) || null,
+  });
+
+  return result;
+}
+
+// Rollback a file to previous version
+export async function rollbackFile(owner, repo, path, changeId, userId = 'bot') {
+  const change = await changelog.getChange(changeId);
+
+  if (!change || !change.oldContent) {
+    throw new Error('Cannot rollback: no previous version found');
+  }
+
+  const rollbackMessage = `Rollback ${path} to version before: ${change.message}`;
+  return await createOrUpdateFile(owner, repo, path, change.oldContent, rollbackMessage, null, userId);
+}
+
+// Get change history for a repo
+export async function getChangeHistory(owner, repo, limit = 10) {
+  return await changelog.getRecentChanges(`${owner}/${repo}`, limit);
+}
+
+// Format change history for display
+export function formatChangeHistory(changes) {
+  return changelog.formatChanges(changes);
 }
 
 // ============================================================================

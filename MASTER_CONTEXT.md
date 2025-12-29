@@ -2,6 +2,32 @@
 # Last Updated: 2025-12-29
 # This file is loaded by the AI on startup and referenced during all conversations
 
+## ARCHITECTURE MODE: BOT OWNS CODE
+
+**All code changes flow through the bot.** No local file editing needed.
+
+```
+Matt (Slack/Web/Mobile) ──> Bot ──> GitHub ──> Auto-Deploy
+                            │
+                   ┌────────┴────────┐
+                   │                 │
+              Change Log        Rollback
+              (History)         (Undo)
+```
+
+**Key Principles:**
+1. Bot always fetches latest SHA before editing (prevents conflicts)
+2. All changes are logged with full history
+3. Risky changes require confirmation
+4. Rollback available for any change
+5. No local files needed - everything via Slack
+
+**New Commands:**
+- `/history owner/repo` - View bot's change history
+- `/rollback owner/repo file [changeId]` - Undo changes
+
+---
+
 ## OWNER
 - Name: Matt
 - Email: matt@rei-realty.com
@@ -57,10 +83,12 @@
 
 ### Bot: AI Orchestrator
 - **Commands Available:**
-  - /do <natural language> - Master command
+  - /do <natural language> - Master command (Bot Owns Code mode)
   - /ask, /review, /challenge, /consensus - AI queries
-  - /repos, /commits, /files, /readfile, /issues, /codesearch - GitHub
-  - /health, /usage - System status
+  - /repos, /commits, /files, /readfile, /issues, /codesearch - GitHub read
+  - /history owner/repo - View bot's change history
+  - /rollback owner/repo file [changeId] - Undo changes
+  - /health - System status
 
 ## CURRENT WORK / RECENT HISTORY
 
