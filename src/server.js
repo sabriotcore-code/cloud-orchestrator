@@ -488,52 +488,115 @@ async function executePendingPlan(userId) {
     let stepsExecuted = 0;
     let stepsFailed = 0;
 
-    for (const step of plan.plan || []) {
-      if (!step.automated) {
-        executionLog += `⏭️ *Step ${step.step}:* ${step.action} _(manual)_\n`;
-        continue;
-      }
+    // Handle EXECUTE_PLAN format (fixes array from investigation)
+    if (plan.fixes && plan.fixes.length > 0) {
+      executionLog += `📋 *Applying ${plan.fixes.length} fix(es)...*\n\n`;
 
-      executionLog += `🔄 *Step ${step.step}:* ${step.action}...\n`;
+      for (const fix of plan.fixes) {
+        executionLog += `🔄 *${fix.file}:* ${fix.description}\n`;
 
-      try {
-        if (step.api === 'github.getContent' || step.action.toLowerCase().includes('read')) {
-          const path = step.parameters?.path || '';
-          const repo = step.parameters?.repo || 'rei-dashboard';
-          const owner = step.parameters?.owner || 'sabriotcore-code';
+        try {
+          // Determine target repo from the stored context or default
+          const targetOwner = plan.owner || 'sabriotcore-code';
+          const targetRepo = plan.repo || 'rei-dashboard';
 
-          if (path) {
-            const content = await github.readFile(owner, repo, path);
-            executionLog += `  ✅ Read ${path} (${content.size || 0} bytes)\n`;
-          } else {
-            const files = await github.listFiles(owner, repo, '');
-            executionLog += `  ✅ Listed ${files.length} files\n`;
+          // Read current file
+          const currentFile = await github.readFile(targetOwner, targetRepo, fix.file);
+          let newContent = currentFile.content;
+
+          // Apply the fix
+          if (fix.oldCode && fix.newCode) {
+            if (newContent.includes(fix.oldCode)) {
+              newContent = newContent.replace(fix.oldCode, fix.newCode);
+            } else {
+              // Try partial match for truncated oldCode
+              const oldCodeStart = fix.oldCode.substring(0, 50);
+              if (newContent.includes(oldCodeStart)) {
+                const startIdx = newContent.indexOf(oldCodeStart);
+                // Replace from that point with the new code
+                newContent = newContent.substring(0, startIdx) + fix.newCode;
+              } else {
+                executionLog += `  ⚠️ Could not find exact match for replacement\n`;
+                stepsFailed++;
+                continue;
+              }
+            }
+          } else if (fix.newCode) {
+            newContent = fix.newCode;
           }
+
+          // Commit the fix
+          await github.createOrUpdateFile(
+            targetOwner,
+            targetRepo,
+            fix.file,
+            newContent,
+            `Fix: ${fix.description}`,
+            currentFile.sha,
+            userId
+          );
+
+          executionLog += `  ✅ Committed!\n`;
           stepsExecuted++;
-        } else if (step.action.toLowerCase().includes('commit') || step.action.toLowerCase().includes('push') || step.action.toLowerCase().includes('update file')) {
-          executionLog += `  ⚠️ Write operation requires specific content - marked for review\n`;
-        } else {
-          executionLog += `  ℹ️ Noted\n`;
-          stepsExecuted++;
+        } catch (stepError) {
+          executionLog += `  ❌ Failed: ${stepError.message}\n`;
+          stepsFailed++;
         }
-      } catch (stepError) {
-        executionLog += `  ❌ Failed: ${stepError.message}\n`;
-        stepsFailed++;
       }
+
+      executionLog += `\n*Summary:* ${stepsExecuted} files fixed, ${stepsFailed} failed\n`;
+
+      if (plan.manualSteps && plan.manualSteps.length > 0) {
+        executionLog += `\n*Manual Steps Still Needed:*\n`;
+        for (const ms of plan.manualSteps) {
+          executionLog += `👤 ${ms}\n`;
+        }
+      }
+
+      executionLog += `\n_Use "/do history" to see changes. Use "/do rollback" to undo._`;
     }
+    // Handle old plan format (step-based)
+    else if (plan.plan) {
+      for (const step of plan.plan) {
+        if (!step.automated) {
+          executionLog += `⏭️ *Step ${step.step}:* ${step.action} _(manual)_\n`;
+          continue;
+        }
 
-    executionLog += `\n*Summary:* ${stepsExecuted} steps executed, ${stepsFailed} failed\n`;
+        executionLog += `🔄 *Step ${step.step}:* ${step.action}...\n`;
 
-    if (plan.manualSteps && plan.manualSteps.length > 0) {
-      executionLog += `\n*Manual Steps Needed:*\n`;
-      for (const ms of plan.manualSteps) {
-        executionLog += `👤 ${ms}\n`;
+        try {
+          if (step.api === 'github.getContent' || step.action.toLowerCase().includes('read')) {
+            const path = step.parameters?.path || '';
+            const repo = step.parameters?.repo || 'rei-dashboard';
+            const owner = step.parameters?.owner || 'sabriotcore-code';
+
+            if (path) {
+              const content = await github.readFile(owner, repo, path);
+              executionLog += `  ✅ Read ${path} (${content.size || 0} bytes)\n`;
+            } else {
+              const files = await github.listFiles(owner, repo, '');
+              executionLog += `  ✅ Listed ${files.length} files\n`;
+            }
+            stepsExecuted++;
+          } else {
+            executionLog += `  ℹ️ Noted\n`;
+            stepsExecuted++;
+          }
+        } catch (stepError) {
+          executionLog += `  ❌ Failed: ${stepError.message}\n`;
+          stepsFailed++;
+        }
       }
+
+      executionLog += `\n*Summary:* ${stepsExecuted} steps, ${stepsFailed} failed\n`;
+    } else {
+      executionLog += `⚠️ Plan format not recognized. Please try again.`;
     }
 
     // Clear the stored plan
     await memory.store(`plan_${userId}`, '', 'plans');
-    await context.updateContext('CURRENT WORK', `Executed plan with ${stepsExecuted} steps`);
+    await context.updateContext('CURRENT WORK', `Executed plan with ${stepsExecuted} fixes`);
 
     return { master: { response: executionLog }};
   } catch (e) {
