@@ -580,7 +580,7 @@ Endpoints:
 
 Slack Commands:
   AI:     /ask /review /challenge /consensus /health /usage
-  GitHub: /repos /commits /files /readfile /issues /search
+  GitHub: /repos /commits /files /readfile /issues /codesearch
 `);
 });
 

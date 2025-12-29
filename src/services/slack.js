@@ -353,8 +353,8 @@ function registerCommands() {
     }
   });
 
-  // /search - Search code across repos
-  slackApp.command('/search', async ({ command, ack, respond }) => {
+  // /codesearch - Search code across repos
+  slackApp.command('/codesearch', async ({ command, ack, respond }) => {
     await ack();
 
     if (!github.isConfigured()) {
