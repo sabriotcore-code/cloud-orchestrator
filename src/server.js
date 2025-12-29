@@ -445,6 +445,144 @@ app.use((err, req, res, next) => {
 });
 
 // ============================================================================
+// MASTER AI COMMAND HANDLER
+// ============================================================================
+
+async function handleMasterCommand(query) {
+  if (!query) {
+    return { master: {
+      response: `🤖 *AI Orchestrator - Available Actions:*\n\n` +
+        `Just tell me what you need in plain English:\n` +
+        `• "show my repos"\n` +
+        `• "what files are in cloud-orchestrator"\n` +
+        `• "read the package.json from cloud-orchestrator"\n` +
+        `• "show recent commits for cloud-orchestrator"\n` +
+        `• "what are the open issues"\n` +
+        `• "search for askClaude in my code"\n` +
+        `• "review this code: function add(a,b){return a+b}"\n` +
+        `• "ask all 3 AIs: what is the best programming language"\n`
+    }};
+  }
+
+  // Use Claude to understand intent and extract parameters
+  const intentPrompt = `You are a command router. Analyze this user request and determine what action to take.
+
+Available actions:
+- REPOS: List user's GitHub repositories
+- FILES: List files in a repo (needs: owner, repo, path)
+- READ: Read a file (needs: owner, repo, filepath)
+- COMMITS: Show commits (needs: owner, repo)
+- ISSUES: Show issues (needs: owner, repo)
+- SEARCH: Search code (needs: query)
+- ASK_AI: Ask a question to all 3 AIs (needs: question)
+- REVIEW: Code review (needs: code)
+- CHALLENGE: Challenge an approach (needs: content)
+
+User request: "${query}"
+
+Known repos: sabriotcore-code/cloud-orchestrator, sabriotcore-code/rei-dashboard, sabriotcore-code/ai-orchestrator
+
+Respond with ONLY a JSON object (no markdown, no explanation):
+{"action": "ACTION_NAME", "params": {"key": "value"}}
+
+Examples:
+- "show my repos" → {"action": "REPOS", "params": {}}
+- "files in cloud-orchestrator" → {"action": "FILES", "params": {"owner": "sabriotcore-code", "repo": "cloud-orchestrator", "path": ""}}
+- "read package.json from cloud-orchestrator" → {"action": "READ", "params": {"owner": "sabriotcore-code", "repo": "cloud-orchestrator", "filepath": "package.json"}}
+- "what is 2+2" → {"action": "ASK_AI", "params": {"question": "what is 2+2"}}`;
+
+  const intentResult = await ai.askClaude(intentPrompt, '');
+
+  if (!intentResult.success) {
+    return { master: { response: `❌ Failed to understand request: ${intentResult.error}` }};
+  }
+
+  // Parse the intent
+  let intent;
+  try {
+    // Extract JSON from response (handle markdown code blocks)
+    let jsonStr = intentResult.response.trim();
+    if (jsonStr.startsWith('```')) {
+      jsonStr = jsonStr.replace(/```json?\n?/g, '').replace(/```/g, '').trim();
+    }
+    intent = JSON.parse(jsonStr);
+  } catch (e) {
+    // If parsing fails, treat as a general AI question
+    intent = { action: 'ASK_AI', params: { question: query }};
+  }
+
+  // Execute the action
+  try {
+    switch (intent.action) {
+      case 'REPOS':
+        const repos = await github.listRepos(20);
+        return { repos };
+
+      case 'FILES':
+        const files = await github.listFiles(
+          intent.params.owner || 'sabriotcore-code',
+          intent.params.repo || 'cloud-orchestrator',
+          intent.params.path || ''
+        );
+        return { files, path: intent.params.path || 'root' };
+
+      case 'READ':
+        const file = await github.readFile(
+          intent.params.owner || 'sabriotcore-code',
+          intent.params.repo,
+          intent.params.filepath
+        );
+        return { file };
+
+      case 'COMMITS':
+        const commits = await github.getCommits(
+          intent.params.owner || 'sabriotcore-code',
+          intent.params.repo || 'cloud-orchestrator',
+          10
+        );
+        return { commits };
+
+      case 'ISSUES':
+        const issues = await github.listIssues(
+          intent.params.owner || 'sabriotcore-code',
+          intent.params.repo || 'cloud-orchestrator',
+          'open',
+          15
+        );
+        return { issues };
+
+      case 'SEARCH':
+        const search = await github.searchCode(intent.params.query, 10);
+        return { search, query: intent.params.query };
+
+      case 'ASK_AI':
+        const askResults = await ai.askAll(intent.params.question, 'general');
+        const consensus = await ai.buildConsensus(askResults, 'weighted');
+        return { master: {
+          response: `🤖 *AI Consensus:*\n${consensus.response}\n\n` +
+            `_Sources: ${consensus.sources?.join(', ') || consensus.winner}_`
+        }};
+
+      case 'REVIEW':
+        const reviewResults = await ai.askAll(intent.params.code || query, 'review');
+        return reviewResults;
+
+      case 'CHALLENGE':
+        const challengeResults = await ai.askAll(intent.params.content || query, 'challenge');
+        return challengeResults;
+
+      default:
+        // Fallback: Ask all AIs
+        const defaultResults = await ai.askAll(query, 'general');
+        const defaultConsensus = await ai.buildConsensus(defaultResults, 'weighted');
+        return { master: { response: defaultConsensus.response }};
+    }
+  } catch (error) {
+    return { master: { response: `❌ Error: ${error.message}` }};
+  }
+}
+
+// ============================================================================
 // SLACK INTEGRATION
 // ============================================================================
 
@@ -550,6 +688,10 @@ app.post('/slack/commands', express.urlencoded({ extended: true }), async (req, 
           result = { search: await github.searchCode(content, 10), query: content };
         }
         break;
+      case '/do':
+        // Master AI command - figures out what to do
+        result = await handleMasterCommand(content);
+        break;
       default:
         result = { error: 'Unknown command' };
     }
@@ -625,6 +767,9 @@ function formatSlackResponse(command, result) {
       text += `• *${r.repo}* - ${r.path}\n`;
     }
     return text;
+  }
+  if (result.master) {
+    return result.master.response;
   }
 
   let text = `*${command.slice(1).toUpperCase()} Results:*\n\n`;
