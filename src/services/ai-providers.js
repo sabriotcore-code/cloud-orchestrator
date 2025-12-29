@@ -59,6 +59,16 @@ const providers = {
     maxTokens: 8000
   },
 
+  // xAI Grok (Elon's AI - real-time knowledge)
+  grok: {
+    apiKey: process.env.XAI_API_KEY,
+    baseUrl: 'https://api.x.ai/v1',
+    model: 'grok-beta',
+    costPer1kIn: 0.005,
+    costPer1kOut: 0.015,
+    maxTokens: 8192
+  },
+
   // Perplexity (Real-time web search)
   perplexity: {
     apiKey: process.env.PERPLEXITY_API_KEY,
@@ -137,6 +147,7 @@ export function getProviderStatus() {
     o1: !!providers.o1.client,
     gemini: !!providers.gemini.client,
     groq: !!providers.groq.apiKey,
+    grok: !!providers.grok.apiKey,
     perplexity: !!providers.perplexity.apiKey,
     mistral: !!providers.mistral.apiKey,
     cohere: !!providers.cohere.apiKey,
@@ -204,6 +215,7 @@ export async function chat(provider, prompt, options = {}) {
         break;
 
       case 'groq':
+      case 'grok':
       case 'together':
       case 'deepseek':
         response = await callOpenAICompatible(config, prompt, options);
