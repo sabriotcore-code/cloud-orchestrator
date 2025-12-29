@@ -8,6 +8,7 @@ import { v4 as uuidv4 } from 'uuid';
 
 import * as db from './db/index.js';
 import * as ai from './services/ai.js';
+import { initSlack, slackApp } from './services/slack.js';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -18,6 +19,9 @@ const PORT = process.env.PORT || 3000;
 
 app.use(helmet());
 app.use(cors());
+
+// Slack needs raw body for signature verification - must come before express.json
+app.use('/slack/events', express.raw({ type: 'application/json' }));
 app.use(express.json({ limit: '10mb' }));
 
 // Request logging
@@ -308,30 +312,137 @@ app.use((err, req, res, next) => {
 });
 
 // ============================================================================
+// SLACK INTEGRATION
+// ============================================================================
+
+// Initialize Slack if credentials are provided
+initSlack(app);
+
+// Slack events endpoint
+app.post('/slack/events', async (req, res) => {
+  if (!slackApp) {
+    return res.status(503).json({ error: 'Slack not configured' });
+  }
+
+  try {
+    // Parse body if raw
+    const body = typeof req.body === 'string' ? JSON.parse(req.body) :
+                 Buffer.isBuffer(req.body) ? JSON.parse(req.body.toString()) : req.body;
+
+    // Handle Slack URL verification challenge
+    if (body.type === 'url_verification') {
+      return res.json({ challenge: body.challenge });
+    }
+
+    res.status(200).send();
+  } catch (error) {
+    console.error('[Slack] Event error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Slack slash commands endpoint
+app.post('/slack/commands', express.urlencoded({ extended: true }), async (req, res) => {
+  if (!slackApp) {
+    return res.status(503).json({ error: 'Slack not configured' });
+  }
+
+  const { command, text, response_url, user_name } = req.body;
+  console.log(`[Slack] Command: ${command} from ${user_name}`);
+
+  // Acknowledge immediately
+  res.status(200).json({ response_type: 'ephemeral', text: '🤔 Processing...' });
+
+  try {
+    let result;
+    const content = text.trim();
+
+    switch (command) {
+      case '/ask':
+      case '/review':
+      case '/challenge':
+        const mode = command === '/challenge' ? 'challenge' :
+                     command === '/review' ? 'review' : 'general';
+        result = await ai.askAll(content || 'Hello', mode);
+        break;
+      case '/consensus':
+        const allResults = await ai.askAll(content || 'Hello', 'general');
+        const consensus = await ai.buildConsensus(allResults, 'weighted');
+        result = { consensus };
+        break;
+      case '/health':
+        result = { health: ai.getProviderStatus() };
+        break;
+      default:
+        result = { error: 'Unknown command' };
+    }
+
+    // Send async response
+    await fetch(response_url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        response_type: 'in_channel',
+        text: formatSlackResponse(command, result)
+      }),
+    });
+  } catch (error) {
+    console.error('[Slack] Command error:', error);
+    await fetch(req.body.response_url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: `❌ Error: ${error.message}` }),
+    });
+  }
+});
+
+// Format Slack response
+function formatSlackResponse(command, result) {
+  if (result.error) return `❌ ${result.error}`;
+  if (result.health) {
+    const h = result.health;
+    return `🏥 *Health:* Claude ${h.claude ? '✅' : '❌'} | GPT ${h.gpt ? '✅' : '❌'} | Gemini ${h.gemini ? '✅' : '❌'}`;
+  }
+  if (result.consensus) {
+    return `🤝 *Consensus:*\n${result.consensus.response || 'No consensus'}`;
+  }
+
+  let text = `*${command.slice(1).toUpperCase()} Results:*\n\n`;
+  for (const [provider, r] of Object.entries(result)) {
+    if (r.success) {
+      text += `*${provider.toUpperCase()}* (${r.latencyMs}ms):\n${r.response.substring(0, 500)}\n\n`;
+    }
+  }
+  return text;
+}
+
+// ============================================================================
 // START SERVER
 // ============================================================================
+
+const slackStatus = process.env.SLACK_BOT_TOKEN ? 'enabled' : 'disabled';
 
 app.listen(PORT, () => {
   console.log(`
 ╔══════════════════════════════════════════════════════════════╗
 ║           CLOUD ORCHESTRATOR - Running                       ║
 ╠══════════════════════════════════════════════════════════════╣
-║  Port: ${PORT}                                                  ║
-║  Env:  ${process.env.NODE_ENV || 'development'}                                        ║
-║  Time: ${new Date().toISOString()}               ║
+║  Port:  ${PORT}                                                 ║
+║  Env:   ${process.env.NODE_ENV || 'development'}                                       ║
+║  Slack: ${slackStatus}                                          ║
+║  Time:  ${new Date().toISOString()}              ║
 ╚══════════════════════════════════════════════════════════════╝
 
 Endpoints:
   GET  /health              - System health check
-  POST /ai/:provider        - Single AI query (claude/gpt/gemini)
-  POST /ai/all              - Query all 3 AIs in parallel
-  POST /ai/consensus        - Multi-AI with consensus
-  POST /review              - Code review (like original orchestrator)
-  POST /chat                - Chat with memory
-  GET  /chat/:sessionId     - Get conversation history
-  POST /memory              - Store key-value
-  GET  /memory/:key         - Retrieve value
-  GET  /usage               - Usage statistics
+  POST /ai/:provider        - Single AI query
+  POST /ai/all              - Query all 3 AIs
+  POST /ai/consensus        - Multi-AI consensus
+  POST /review              - Code review panel
+  POST /slack/commands      - Slack slash commands
+  POST /slack/events        - Slack events
+
+Slack Commands: /ask /review /challenge /consensus /health
 `);
 });
 
