@@ -517,6 +517,12 @@ Available actions:
 - UPDATE_CONTEXT: Update master context file (when asked to "log this", "add to context", "update status")
 - GET_CONTEXT: Show current master context/status
 
+EXECUTABLE ACTIONS (these actually DO things):
+- COMMIT_FILE: Create or update a file in a repo (when asked to "create file", "add file", "update file", "commit", "push")
+- CREATE_PR: Create a pull request (when asked to "create PR", "open pull request", "make PR")
+- DEPLOY: Trigger deployment by pushing to master (when asked to "deploy", "push changes", "go live")
+- EXECUTE_PLAN: Generate and execute a multi-step plan (when asked to "do X", "migrate", "move", "set up", complex tasks)
+
 === MASTER CONTEXT (What I know about Matt's projects) ===
 ${masterContextSummary}
 ===
@@ -537,11 +543,12 @@ Respond with ONLY a JSON object (no markdown, no explanation):
 Examples:
 - "show my repos" → {"action": "REPOS", "params": {}}
 - "list files in cloud-orchestrator" → {"action": "FILES", "params": {"owner": "sabriotcore-code", "repo": "cloud-orchestrator", "path": ""}}
-- "what does rei-dashboard do" → {"action": "ASK_AI", "params": {"question": "What does the rei-dashboard project do? It's a real estate investment dashboard hosted on Netlify."}}
-- "what is this for" → {"action": "ASK_AI", "params": {"question": "Based on context, explain what this is for"}}
-- "explain the cloud-orchestrator" → {"action": "ASK_AI", "params": {"question": "Explain the cloud-orchestrator project - it's a multi-AI system that queries Claude, GPT, and Gemini"}}
+- "what does rei-dashboard do" → {"action": "ASK_AI", "params": {"question": "What does the rei-dashboard project do?"}}
 - "search the web for nodejs" → {"action": "WEB_SEARCH", "params": {"query": "nodejs"}}
-- "what is 2+2" → {"action": "ASK_AI", "params": {"question": "what is 2+2"}}`;
+- "create file README.md in rei-dashboard with hello world" → {"action": "COMMIT_FILE", "params": {"owner": "sabriotcore-code", "repo": "rei-dashboard", "path": "README.md", "content": "# Hello World", "message": "Add README"}}
+- "deploy rei-dashboard" → {"action": "DEPLOY", "params": {"repo": "rei-dashboard", "message": "Deploy via Slack"}}
+- "migrate rei-dashboard to Railway" → {"action": "EXECUTE_PLAN", "params": {"task": "migrate rei-dashboard to Railway", "steps": []}}
+- "create PR in cloud-orchestrator with title Fix bug" → {"action": "CREATE_PR", "params": {"owner": "sabriotcore-code", "repo": "cloud-orchestrator", "title": "Fix bug", "branch": "fix-bug"}}`;
 
   const intentResult = await ai.askClaude(intentPrompt, '');
 
@@ -687,6 +694,181 @@ Examples:
       case 'GET_CONTEXT':
         const currentContext = await context.getContextSummary();
         return { master: { response: `📋 *Current Master Context:*\n\n${currentContext.substring(0, 2500)}` }};
+
+      // ================== EXECUTABLE ACTIONS ==================
+
+      case 'COMMIT_FILE':
+        // Create or update a file in a repo
+        try {
+          const commitOwner = intent.params.owner || 'sabriotcore-code';
+          const commitRepo = intent.params.repo;
+          const commitPath = intent.params.path;
+          const commitContent = intent.params.content;
+          const commitMessage = intent.params.message || `Update ${commitPath} via Slack`;
+
+          if (!commitRepo || !commitPath || !commitContent) {
+            return { master: { response: `❌ Missing required params. Need: repo, path, content` }};
+          }
+
+          // Try to get existing file SHA (for updates)
+          let existingSha = null;
+          try {
+            const existing = await github.readFile(commitOwner, commitRepo, commitPath);
+            existingSha = existing.sha;
+          } catch (e) {
+            // File doesn't exist, that's fine for creating
+          }
+
+          const result = await github.createOrUpdateFile(
+            commitOwner,
+            commitRepo,
+            commitPath,
+            commitContent,
+            commitMessage,
+            existingSha
+          );
+
+          await context.updateContext('CURRENT WORK', `Committed ${commitPath} to ${commitRepo}`);
+
+          return { master: { response: `✅ *File Committed!*\n📁 \`${commitPath}\`\n📦 Repo: ${commitOwner}/${commitRepo}\n📝 Message: ${commitMessage}\n🔗 ${result.content?.html_url || 'Commit successful'}` }};
+        } catch (e) {
+          return { master: { response: `❌ Failed to commit: ${e.message}` }};
+        }
+
+      case 'CREATE_PR':
+        // Create a pull request (note: requires branch to exist with changes)
+        return { master: { response: `⚠️ *Create PR requires a branch with changes.*\n\nTo create a PR:\n1. First use COMMIT_FILE to add changes to a new branch\n2. Then create the PR\n\nOr use the GitHub web interface for complex PRs.` }};
+
+      case 'DEPLOY':
+        // Trigger deployment - for Railway, pushing to master auto-deploys
+        try {
+          const deployRepo = intent.params.repo || 'cloud-orchestrator';
+          const deployOwner = intent.params.owner || 'sabriotcore-code';
+          const deployMessage = intent.params.message || 'Deploy triggered via Slack';
+
+          // For Railway: pushing to master triggers deploy
+          // We'll update a deploy timestamp file to trigger a new deploy
+          const timestamp = new Date().toISOString();
+          const deployContent = `# Deploy Log\nLast deployed: ${timestamp}\nTriggered by: Slack /do command\nMessage: ${deployMessage}\n`;
+
+          let deploySha = null;
+          try {
+            const existing = await github.readFile(deployOwner, deployRepo, '.deploy-log');
+            deploySha = existing.sha;
+          } catch (e) {
+            // File doesn't exist
+          }
+
+          await github.createOrUpdateFile(
+            deployOwner,
+            deployRepo,
+            '.deploy-log',
+            deployContent,
+            `Deploy: ${deployMessage}`,
+            deploySha
+          );
+
+          await context.updateContext('CURRENT WORK', `Deployed ${deployRepo}`);
+
+          return { master: { response: `🚀 *Deployment Triggered!*\n📦 Repo: ${deployOwner}/${deployRepo}\n⏰ Time: ${timestamp}\n📝 Message: ${deployMessage}\n\n_Railway will auto-deploy from master in ~30 seconds._` }};
+        } catch (e) {
+          return { master: { response: `❌ Failed to deploy: ${e.message}` }};
+        }
+
+      case 'EXECUTE_PLAN':
+        // For complex multi-step tasks - generate a plan and start executing
+        try {
+          const task = intent.params.task || query;
+
+          // Get current repos and context
+          const repos = await github.listRepos(10);
+          const repoInfo = repos.map(r => `- ${r.name}: ${r.description || 'No description'}`).join('\n');
+          const ctx = await context.getContextSummary();
+
+          // Ask Claude to generate an execution plan
+          const planPrompt = `You are an AI that can execute tasks via GitHub API and other integrations.
+
+TASK: ${task}
+
+AVAILABLE REPOS:
+${repoInfo}
+
+CONTEXT:
+${ctx}
+
+AVAILABLE ACTIONS I CAN EXECUTE:
+1. Create/update files in any repo (github.createOrUpdateFile)
+2. Create GitHub issues
+3. Read files
+4. Update master context
+5. Web search for information
+
+Generate a CONCRETE execution plan with steps I can actually do. For each step, specify:
+- What API call to make
+- What parameters to use
+- What the expected outcome is
+
+If the task requires things I CANNOT do (like access Railway admin, run local commands, access external services directly), explain what would need to be done manually.
+
+Return a JSON object:
+{
+  "canExecute": true/false,
+  "plan": [
+    {"step": 1, "action": "description", "automated": true/false},
+    ...
+  ],
+  "manualSteps": ["step that needs human action"],
+  "summary": "brief summary of what will happen"
+}`;
+
+          const planResult = await ai.askClaude(planPrompt, '');
+
+          if (!planResult.success) {
+            return { master: { response: `❌ Failed to generate plan: ${planResult.error}` }};
+          }
+
+          let plan;
+          try {
+            let jsonStr = planResult.response.trim();
+            if (jsonStr.startsWith('```')) {
+              jsonStr = jsonStr.replace(/```json?\n?/g, '').replace(/```/g, '').trim();
+            }
+            plan = JSON.parse(jsonStr);
+          } catch (e) {
+            // Return the raw response if not JSON
+            return { master: { response: `📋 *Execution Plan for: ${task}*\n\n${planResult.response}` }};
+          }
+
+          // Format the plan nicely
+          let response = `📋 *Execution Plan: ${task}*\n\n`;
+          response += `*Summary:* ${plan.summary}\n\n`;
+
+          if (plan.plan && plan.plan.length > 0) {
+            response += `*Steps:*\n`;
+            for (const step of plan.plan) {
+              const icon = step.automated ? '🤖' : '👤';
+              response += `${icon} ${step.step}. ${step.action}\n`;
+            }
+          }
+
+          if (plan.manualSteps && plan.manualSteps.length > 0) {
+            response += `\n*Manual Steps Required:*\n`;
+            for (const ms of plan.manualSteps) {
+              response += `👤 ${ms}\n`;
+            }
+          }
+
+          if (plan.canExecute) {
+            response += `\n_Reply "/do execute plan" to start automated steps._`;
+          }
+
+          // Store the plan in memory for potential execution
+          await memory.store(`plan_${userId}`, JSON.stringify(plan), 'plans');
+
+          return { master: { response }};
+        } catch (e) {
+          return { master: { response: `❌ Failed to create plan: ${e.message}` }};
+        }
 
       case 'ASK_AI':
         // Check if question is about projects/repos - if so, include real data
