@@ -486,40 +486,51 @@ async function handleMasterCommand(query, userId = 'default') {
   const context = await memory.getContextString(userId, 3);
 
   // Use Claude to understand intent and extract parameters
-  const intentPrompt = `You are a command router. Analyze this user request and determine what action to take.
+  const intentPrompt = `You are a smart command router. Analyze this user request and determine what action to take.
+
+IMPORTANT RULES:
+1. If the user asks "what does X do", "what is X", "explain X", "describe X", "tell me about X" - use ASK_AI with the question. These are QUESTIONS, not file operations.
+2. Only use FILES/READ when user explicitly asks to "list files", "show files", "read file", "open file"
+3. For questions about projects, repos, or services - use ASK_AI and include context from previous messages
+4. When in doubt, use ASK_AI - it's better to answer intelligently than list files
 
 Available actions:
-- REPOS: List user's GitHub repositories
-- FILES: List files in a repo (needs: owner, repo, path)
-- READ: Read a file (needs: owner, repo, filepath)
-- COMMITS: Show commits (needs: owner, repo)
-- ISSUES: Show issues (needs: owner, repo)
-- CREATE_ISSUE: Create a GitHub issue (needs: owner, repo, title, body)
-- SEARCH: Search code (needs: query)
-- WEB_SEARCH: Search the web (needs: query)
-- READ_SHEET: Read Google Sheet (needs: spreadsheetId, range)
-- ASK_AI: Ask a question to all 3 AIs (needs: question)
-- REVIEW: Code review (needs: code)
-- CHALLENGE: Challenge an approach (needs: content)
-- REMEMBER: Store something in memory (needs: key, value)
-- RECALL: Retrieve from memory (needs: key)
+- REPOS: List user's GitHub repositories (ONLY when asked to "list repos", "show repos", "my repos")
+- FILES: List files in a repo (ONLY when asked to "list files", "show files in")
+- READ: Read a file (ONLY when asked to "read file", "show contents of", "open file")
+- COMMITS: Show commits (when asked for "commits", "recent changes", "history")
+- ISSUES: Show issues (when asked for "issues", "bugs", "tickets")
+- CREATE_ISSUE: Create a GitHub issue (when asked to "create issue", "open issue", "report bug")
+- SEARCH: Search code (when asked to "search code", "find in code", "where is")
+- WEB_SEARCH: Search the web (when asked to "search web", "google", "look up online")
+- READ_SHEET: Read Google Sheet (when given a sheet ID or asked about spreadsheet)
+- ASK_AI: Ask a question - USE THIS FOR ANY QUESTION including "what does X do", "explain", "describe", "why", "how"
+- REVIEW: Code review (when given code to review)
+- CHALLENGE: Challenge an approach (when asked to challenge or critique)
+- REMEMBER: Store something in memory (when asked to "remember", "save", "store")
+- RECALL: Retrieve from memory (when asked to "recall", "what did I say about")
 - HISTORY: Show conversation history
 
 ${context ? `Recent conversation:\n${context}\n` : ''}
 
 User request: "${query}"
 
-Known repos: sabriotcore-code/cloud-orchestrator, sabriotcore-code/rei-dashboard, sabriotcore-code/ai-orchestrator
+Known repos and what they do:
+- sabriotcore-code/cloud-orchestrator: Multi-AI orchestration system with Slack bot, queries Claude/GPT/Gemini
+- sabriotcore-code/rei-dashboard: Real estate investment dashboard hosted on Netlify
+- sabriotcore-code/ai-orchestrator: Local AI orchestrator (older version)
+- sabriotcore-code/rei-automation: Real estate automation scripts
 
 Respond with ONLY a JSON object (no markdown, no explanation):
 {"action": "ACTION_NAME", "params": {"key": "value"}}
 
 Examples:
 - "show my repos" → {"action": "REPOS", "params": {}}
-- "files in cloud-orchestrator" → {"action": "FILES", "params": {"owner": "sabriotcore-code", "repo": "cloud-orchestrator", "path": ""}}
+- "list files in cloud-orchestrator" → {"action": "FILES", "params": {"owner": "sabriotcore-code", "repo": "cloud-orchestrator", "path": ""}}
+- "what does rei-dashboard do" → {"action": "ASK_AI", "params": {"question": "What does the rei-dashboard project do? It's a real estate investment dashboard hosted on Netlify."}}
+- "what is this for" → {"action": "ASK_AI", "params": {"question": "Based on context, explain what this is for"}}
+- "explain the cloud-orchestrator" → {"action": "ASK_AI", "params": {"question": "Explain the cloud-orchestrator project - it's a multi-AI system that queries Claude, GPT, and Gemini"}}
 - "search the web for nodejs" → {"action": "WEB_SEARCH", "params": {"query": "nodejs"}}
-- "create issue: fix bug" → {"action": "CREATE_ISSUE", "params": {"owner": "sabriotcore-code", "repo": "cloud-orchestrator", "title": "fix bug", "body": ""}}
-- "remember API key is abc" → {"action": "REMEMBER", "params": {"key": "API key", "value": "abc"}}
 - "what is 2+2" → {"action": "ASK_AI", "params": {"question": "what is 2+2"}}`;
 
   const intentResult = await ai.askClaude(intentPrompt, '');
