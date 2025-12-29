@@ -541,6 +541,106 @@ async function executePendingPlan(userId) {
 }
 
 // ============================================================================
+// #15: CODE EXPLANATION HELPER
+// ============================================================================
+
+async function explainCode(target, userId) {
+  try {
+    let response = `📚 *Explaining: ${target}*\n\n`;
+
+    // Determine if target is a file, repo, or concept
+    const isFile = target.match(/\.(js|html|css|json|md|ts|py)$/);
+    const isRepo = ['rei-dashboard', 'cloud-orchestrator', 'ai-orchestrator', 'rei-automation'].includes(target.toLowerCase());
+
+    let codeToExplain = '';
+
+    if (isFile) {
+      // Try to find the file
+      for (const repo of ['cloud-orchestrator', 'rei-dashboard', 'rei-automation']) {
+        try {
+          const file = await github.readFile('sabriotcore-code', repo, target);
+          codeToExplain = file.content;
+          response += `📁 *Found in:* ${repo}\n\n`;
+          break;
+        } catch (e) { /* try next */ }
+      }
+    } else if (isRepo) {
+      // Get repo overview
+      const files = await github.listFiles('sabriotcore-code', target, '');
+      const mainFiles = [];
+
+      for (const f of files.slice(0, 5)) {
+        if (f.name.endsWith('.js') || f.name.endsWith('.html') || f.name === 'package.json') {
+          try {
+            const content = await github.readFile('sabriotcore-code', target, f.name);
+            mainFiles.push({ name: f.name, content: content.content.substring(0, 1500) });
+          } catch (e) { /* ignore */ }
+        }
+      }
+
+      codeToExplain = mainFiles.map(f => `=== ${f.name} ===\n${f.content}`).join('\n\n');
+      response += `📂 *Repository:* ${target}\n📁 *Files:* ${files.map(f => f.name).join(', ')}\n\n`;
+    }
+
+    if (!codeToExplain) {
+      // Just explain the concept
+      const conceptResult = await ai.askClaude(`Explain this concept in the context of web development and Node.js: ${target}`, '');
+      return { master: { response: response + conceptResult.response }};
+    }
+
+    // Ask Claude to explain the code
+    const explainPrompt = `You are a senior developer explaining code to a colleague.
+
+CODE TO EXPLAIN:
+${codeToExplain.substring(0, 8000)}
+
+Provide a clear explanation covering:
+1. **Purpose**: What does this code do?
+2. **Key Components**: Main functions, classes, or modules
+3. **Data Flow**: How does data move through the code?
+4. **Dependencies**: What does it rely on?
+5. **Potential Issues**: Any concerns or areas for improvement?
+
+Keep the explanation practical and actionable.`;
+
+    const explanation = await ai.askClaude(explainPrompt, '');
+
+    if (explanation.success) {
+      response += explanation.response;
+    } else {
+      response += `❌ Could not generate explanation: ${explanation.error}`;
+    }
+
+    // Store for context
+    await memory.store(`last_response_${userId}`, `Explained ${target}`, 'context');
+
+    return { master: { response }};
+  } catch (e) {
+    return { master: { response: `❌ Error explaining: ${e.message}` }};
+  }
+}
+
+// ============================================================================
+// #5: ERROR RECOVERY HELPER
+// ============================================================================
+
+async function withRetry(fn, maxRetries = 3, delayMs = 1000) {
+  let lastError;
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      return await fn();
+    } catch (error) {
+      lastError = error;
+      console.log(`[Retry] Attempt ${i + 1} failed: ${error.message}`);
+      if (i < maxRetries - 1) {
+        await new Promise(resolve => setTimeout(resolve, delayMs * (i + 1)));
+      }
+    }
+  }
+  throw lastError;
+}
+
+// ============================================================================
 // MASTER AI COMMAND HANDLER
 // ============================================================================
 
@@ -581,6 +681,63 @@ async function handleMasterCommand(query, userId = 'default') {
   // Check for help/status queries
   if (['help', '?', 'what can you do', 'commands', 'options'].includes(queryLower)) {
     return getHelpResponse();
+  }
+
+  // ============================================================
+  // #12: SMARTER INTENT ROUTING - Pattern match before Claude
+  // ============================================================
+
+  // Quick pattern matching for common commands (saves Claude calls)
+  if (queryLower === 'repos' || queryLower === 'show repos' || queryLower === 'my repos' || queryLower === 'list repos') {
+    const repos = await github.listRepos(20);
+    return { repos };
+  }
+
+  if (queryLower.startsWith('explain ') || queryLower.startsWith('what does ') || queryLower.startsWith('how does ')) {
+    // #15: Code Explanation Mode - route to EXPLAIN action
+    const target = query.replace(/^(explain|what does|how does)\s+/i, '').trim();
+    return await explainCode(target, userId);
+  }
+
+  if (queryLower === 'status' || queryLower === 'health') {
+    const health = {
+      ...ai.getProviderStatus(),
+      github: github.isConfigured(),
+      web: web.isConfigured(),
+      google: google.isConfigured()
+    };
+    return { health };
+  }
+
+  // ============================================================
+  // #7: PROACTIVE CONTEXT LOADING - Auto-fetch mentioned files
+  // ============================================================
+
+  let proactiveContext = '';
+
+  // Check if user mentions a specific file
+  const fileMatch = queryLower.match(/\b([\w-]+\.(js|html|css|json|md|ts|py))\b/);
+  if (fileMatch) {
+    const fileName = fileMatch[1];
+    // Try to find and read this file
+    try {
+      for (const repo of ['cloud-orchestrator', 'rei-dashboard', 'rei-automation']) {
+        try {
+          const file = await github.readFile('sabriotcore-code', repo, fileName);
+          proactiveContext += `\n[Auto-loaded ${fileName} from ${repo}]: ${file.content.substring(0, 1000)}...\n`;
+          break;
+        } catch (e) { /* try next repo */ }
+      }
+    } catch (e) { /* ignore */ }
+  }
+
+  // Check if user mentions a specific repo
+  const repoMentioned = queryLower.match(/\b(rei-dashboard|cloud-orchestrator|ai-orchestrator|rei-automation)\b/);
+  if (repoMentioned && !proactiveContext) {
+    try {
+      const files = await github.listFiles('sabriotcore-code', repoMentioned[1], '');
+      proactiveContext += `\n[Auto-loaded ${repoMentioned[1]} structure]: ${files.map(f => f.name).join(', ')}\n`;
+    } catch (e) { /* ignore */ }
   }
 
   if (!query) {
@@ -666,6 +823,7 @@ ${masterContextSummary}
 
 ${lastBotResponse ? `My last response to user:\n${lastBotResponse}\n` : ''}
 ${conversationContext ? `Recent conversation history:\n${conversationContext}\n` : ''}
+${proactiveContext ? `Auto-loaded context:\n${proactiveContext}\n` : ''}
 
 User's current request: "${query}"
 
