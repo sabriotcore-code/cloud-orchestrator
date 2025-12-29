@@ -1383,17 +1383,30 @@ Return JSON:
           let analysis;
           try {
             let jsonStr = analysisResult.response.trim();
-            // Extract JSON from response - handle preamble text before JSON
-            const jsonMatch = jsonStr.match(/\{[\s\S]*\}/);
-            if (jsonMatch) {
-              jsonStr = jsonMatch[0];
-            } else if (jsonStr.startsWith('```')) {
-              jsonStr = jsonStr.replace(/```json?\n?/g, '').replace(/```/g, '').trim();
+
+            // Method 1: Extract from ```json code block
+            const codeBlockMatch = jsonStr.match(/```json?\s*([\s\S]*?)```/);
+            if (codeBlockMatch) {
+              jsonStr = codeBlockMatch[1].trim();
+            } else {
+              // Method 2: Find JSON object (first { to matching })
+              const startIdx = jsonStr.indexOf('{');
+              if (startIdx !== -1) {
+                let depth = 0;
+                let endIdx = startIdx;
+                for (let i = startIdx; i < jsonStr.length; i++) {
+                  if (jsonStr[i] === '{') depth++;
+                  if (jsonStr[i] === '}') depth--;
+                  if (depth === 0) { endIdx = i; break; }
+                }
+                jsonStr = jsonStr.substring(startIdx, endIdx + 1);
+              }
             }
+
             analysis = JSON.parse(jsonStr);
           } catch (e) {
             // Return summary if JSON parsing fails - don't dump raw response
-            return { master: { response: response + `📋 *Analysis:* Could not parse structured response. Try being more specific about the issue.\n\n_Raw: ${analysisResult.response.substring(0, 500)}..._` }};
+            return { master: { response: response + `📋 *Analysis failed to parse.*\n\nTry: "/do what's wrong with the dropdown in rei-dashboard"\n\n_Error: ${e.message}_` }};
           }
 
           // ========== PHASE 3: PRESENT FINDINGS ==========
