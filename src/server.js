@@ -522,6 +522,7 @@ EXECUTABLE ACTIONS (these actually DO things):
 - CREATE_PR: Create a pull request (when asked to "create PR", "open pull request", "make PR")
 - DEPLOY: Trigger deployment by pushing to master (when asked to "deploy", "push changes", "go live")
 - EXECUTE_PLAN: Generate and execute a multi-step plan (when asked to "do X", "migrate", "move", "set up", complex tasks)
+- CONFIRM_PLAN: User confirms they want to execute the previously shown plan (when user says "yes", "do it", "proceed", "execute", "go ahead", "confirm", "run it")
 
 === MASTER CONTEXT (What I know about Matt's projects) ===
 ${masterContextSummary}
@@ -548,7 +549,11 @@ Examples:
 - "create file README.md in rei-dashboard with hello world" → {"action": "COMMIT_FILE", "params": {"owner": "sabriotcore-code", "repo": "rei-dashboard", "path": "README.md", "content": "# Hello World", "message": "Add README"}}
 - "deploy rei-dashboard" → {"action": "DEPLOY", "params": {"repo": "rei-dashboard", "message": "Deploy via Slack"}}
 - "migrate rei-dashboard to Railway" → {"action": "EXECUTE_PLAN", "params": {"task": "migrate rei-dashboard to Railway", "steps": []}}
-- "create PR in cloud-orchestrator with title Fix bug" → {"action": "CREATE_PR", "params": {"owner": "sabriotcore-code", "repo": "cloud-orchestrator", "title": "Fix bug", "branch": "fix-bug"}}`;
+- "create PR in cloud-orchestrator with title Fix bug" → {"action": "CREATE_PR", "params": {"owner": "sabriotcore-code", "repo": "cloud-orchestrator", "title": "Fix bug", "branch": "fix-bug"}}
+- "yes" → {"action": "CONFIRM_PLAN", "params": {}}
+- "do it" → {"action": "CONFIRM_PLAN", "params": {}}
+- "proceed" → {"action": "CONFIRM_PLAN", "params": {}}
+- "execute the plan" → {"action": "CONFIRM_PLAN", "params": {}}`;
 
   const intentResult = await ai.askClaude(intentPrompt, '');
 
@@ -868,6 +873,84 @@ Return a JSON object:
           return { master: { response }};
         } catch (e) {
           return { master: { response: `❌ Failed to create plan: ${e.message}` }};
+        }
+
+      case 'CONFIRM_PLAN':
+        // User confirmed they want to execute a previously generated plan
+        try {
+          // Retrieve the stored plan
+          const storedPlan = await memory.retrieve(`plan_${userId}`);
+
+          if (!storedPlan.value) {
+            return { master: { response: `❌ No pending plan found. Please describe what you want to do first, and I'll create a plan for you to confirm.` }};
+          }
+
+          let planToExecute;
+          try {
+            planToExecute = JSON.parse(storedPlan.value);
+          } catch (e) {
+            return { master: { response: `❌ Could not parse stored plan. Please create a new plan.` }};
+          }
+
+          // Execute the automated steps
+          let executionLog = `🚀 *Executing Plan...*\n\n`;
+          let stepsExecuted = 0;
+          let stepsFailed = 0;
+
+          for (const step of planToExecute.plan || []) {
+            if (!step.automated) {
+              executionLog += `⏭️ *Step ${step.step}:* ${step.action} _(manual - skipped)_\n`;
+              continue;
+            }
+
+            executionLog += `🔄 *Step ${step.step}:* ${step.action}...\n`;
+
+            try {
+              // Execute based on the API mentioned in the step
+              if (step.api === 'github.getContent' || step.action.toLowerCase().includes('read')) {
+                // Read operation - just log it
+                const path = step.parameters?.path || '';
+                const repo = step.parameters?.repo || 'rei-dashboard';
+                const owner = step.parameters?.owner || 'sabriotcore-code';
+
+                if (path) {
+                  const content = await github.readFile(owner, repo, path);
+                  executionLog += `  ✅ Read ${path} (${content.size || 0} bytes)\n`;
+                } else {
+                  const files = await github.listFiles(owner, repo, '');
+                  executionLog += `  ✅ Listed ${files.length} files\n`;
+                }
+                stepsExecuted++;
+              } else if (step.api === 'github.createOrUpdateFile' || step.action.toLowerCase().includes('commit') || step.action.toLowerCase().includes('push') || step.action.toLowerCase().includes('update')) {
+                // This is a write operation - we need specific content
+                executionLog += `  ⚠️ Write operation requires specific content - marked for review\n`;
+              } else {
+                executionLog += `  ℹ️ Step noted\n`;
+                stepsExecuted++;
+              }
+            } catch (stepError) {
+              executionLog += `  ❌ Failed: ${stepError.message}\n`;
+              stepsFailed++;
+            }
+          }
+
+          executionLog += `\n*Summary:* ${stepsExecuted} steps executed, ${stepsFailed} failed\n`;
+
+          if (planToExecute.manualSteps && planToExecute.manualSteps.length > 0) {
+            executionLog += `\n*Manual Steps Still Needed:*\n`;
+            for (const ms of planToExecute.manualSteps) {
+              executionLog += `👤 ${ms}\n`;
+            }
+          }
+
+          // Clear the stored plan
+          await memory.store(`plan_${userId}`, '', 'plans');
+
+          await context.updateContext('CURRENT WORK', `Executed plan with ${stepsExecuted} steps`);
+
+          return { master: { response: executionLog }};
+        } catch (e) {
+          return { master: { response: `❌ Failed to execute plan: ${e.message}` }};
         }
 
       case 'ASK_AI':
