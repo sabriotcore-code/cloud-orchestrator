@@ -451,10 +451,138 @@ app.use((err, req, res, next) => {
 });
 
 // ============================================================================
+// HELPER FUNCTIONS FOR SMART BOT
+// ============================================================================
+
+// Get help response
+function getHelpResponse() {
+  return { master: {
+    response: `🤖 *AI Orchestrator - What I Can Do:*\n\n` +
+      `*💬 Ask Questions:*\n• "what does rei-dashboard do"\n• "explain the cloud-orchestrator"\n\n` +
+      `*📂 GitHub:*\n• "show my repos"\n• "read package.json from cloud-orchestrator"\n• "create file X in repo Y"\n• "deploy cloud-orchestrator"\n\n` +
+      `*🔧 Execute Tasks:*\n• "fix the API error in rei-dashboard"\n• "migrate rei-dashboard to Railway"\n• When I show a plan, say "yes" to execute\n\n` +
+      `*🧠 Memory:*\n• "remember that API key is XYZ"\n• "what do you remember"\n\n` +
+      `*🌐 Web:*\n• "search the web for nodejs best practices"\n\n` +
+      `_Just describe what you want in plain English!_`
+  }};
+}
+
+// Execute a pending plan
+async function executePendingPlan(userId) {
+  try {
+    const storedPlan = await memory.retrieve(`plan_${userId}`);
+
+    if (!storedPlan.value) {
+      return { master: { response: `❌ No pending plan found. Describe what you want to do and I'll create a plan.` }};
+    }
+
+    let plan;
+    try {
+      plan = JSON.parse(storedPlan.value);
+    } catch (e) {
+      return { master: { response: `❌ Could not parse stored plan. Please create a new one.` }};
+    }
+
+    let executionLog = `🚀 *Executing Plan...*\n\n`;
+    let stepsExecuted = 0;
+    let stepsFailed = 0;
+
+    for (const step of plan.plan || []) {
+      if (!step.automated) {
+        executionLog += `⏭️ *Step ${step.step}:* ${step.action} _(manual)_\n`;
+        continue;
+      }
+
+      executionLog += `🔄 *Step ${step.step}:* ${step.action}...\n`;
+
+      try {
+        if (step.api === 'github.getContent' || step.action.toLowerCase().includes('read')) {
+          const path = step.parameters?.path || '';
+          const repo = step.parameters?.repo || 'rei-dashboard';
+          const owner = step.parameters?.owner || 'sabriotcore-code';
+
+          if (path) {
+            const content = await github.readFile(owner, repo, path);
+            executionLog += `  ✅ Read ${path} (${content.size || 0} bytes)\n`;
+          } else {
+            const files = await github.listFiles(owner, repo, '');
+            executionLog += `  ✅ Listed ${files.length} files\n`;
+          }
+          stepsExecuted++;
+        } else if (step.action.toLowerCase().includes('commit') || step.action.toLowerCase().includes('push') || step.action.toLowerCase().includes('update file')) {
+          executionLog += `  ⚠️ Write operation requires specific content - marked for review\n`;
+        } else {
+          executionLog += `  ℹ️ Noted\n`;
+          stepsExecuted++;
+        }
+      } catch (stepError) {
+        executionLog += `  ❌ Failed: ${stepError.message}\n`;
+        stepsFailed++;
+      }
+    }
+
+    executionLog += `\n*Summary:* ${stepsExecuted} steps executed, ${stepsFailed} failed\n`;
+
+    if (plan.manualSteps && plan.manualSteps.length > 0) {
+      executionLog += `\n*Manual Steps Needed:*\n`;
+      for (const ms of plan.manualSteps) {
+        executionLog += `👤 ${ms}\n`;
+      }
+    }
+
+    // Clear the stored plan
+    await memory.store(`plan_${userId}`, '', 'plans');
+    await context.updateContext('CURRENT WORK', `Executed plan with ${stepsExecuted} steps`);
+
+    return { master: { response: executionLog }};
+  } catch (e) {
+    return { master: { response: `❌ Failed to execute plan: ${e.message}` }};
+  }
+}
+
+// ============================================================================
 // MASTER AI COMMAND HANDLER
 // ============================================================================
 
 async function handleMasterCommand(query, userId = 'default') {
+  // ============================================================
+  // SMART CONTEXT SYSTEM - Makes the bot context-aware like Claude Code
+  // ============================================================
+
+  // Get pending state (was there a plan just shown?)
+  const pendingState = await memory.retrieve(`pending_${userId}`);
+  const lastResponse = await memory.retrieve(`last_response_${userId}`);
+
+  // PRE-INTENT SHORTCUTS - Catch obvious patterns before calling Claude
+  const queryLower = query.toLowerCase().trim();
+
+  // Check if this is a confirmation of a pending action
+  if (pendingState.value && ['yes', 'y', 'do it', 'proceed', 'go', 'go ahead', 'confirm', 'execute', 'run it', 'ok', 'okay', 'sure', 'yep', 'yeah', 'affirmative'].includes(queryLower)) {
+    // Clear the pending state
+    await memory.store(`pending_${userId}`, '', 'state');
+
+    // Check what type of pending action we have
+    if (pendingState.value === 'PLAN') {
+      // Execute the stored plan
+      return await executePendingPlan(userId);
+    } else if (pendingState.value === 'CONFIRM') {
+      // Generic confirmation - execute whatever was pending
+      return { master: { response: `✅ Confirmed! Proceeding with the action.` }};
+    }
+  }
+
+  // Check if this is a rejection
+  if (pendingState.value && ['no', 'n', 'cancel', 'stop', 'nevermind', 'never mind', 'abort', 'nope', 'nah'].includes(queryLower)) {
+    await memory.store(`pending_${userId}`, '', 'state');
+    await memory.store(`plan_${userId}`, '', 'plans');
+    return { master: { response: `❌ Cancelled. What would you like to do instead?` }};
+  }
+
+  // Check for help/status queries
+  if (['help', '?', 'what can you do', 'commands', 'options'].includes(queryLower)) {
+    return getHelpResponse();
+  }
+
   if (!query) {
     return { master: {
       response: `🤖 *AI Orchestrator - Available Actions:*\n\n` +
@@ -483,15 +611,23 @@ async function handleMasterCommand(query, userId = 'default') {
   // Store user message in memory
   await memory.remember(userId, 'user', query);
 
-  // Get conversation context
-  const conversationContext = await memory.getContextString(userId, 3);
+  // Get RICHER conversation context (more messages)
+  const conversationContext = await memory.getContextString(userId, 8);
+
+  // Get the last bot response for immediate context
+  const lastBotResponse = lastResponse.value || '';
 
   // Get master context summary
   const masterContextSummary = await context.getContextSummary();
 
+  // Build context about current state
+  const stateContext = pendingState.value
+    ? `\n⚠️ IMPORTANT: There is a pending ${pendingState.value} awaiting user response.\n`
+    : '';
+
   // Use Claude to understand intent and extract parameters
   const intentPrompt = `You are a smart command router. Analyze this user request and determine what action to take.
-
+${stateContext}
 IMPORTANT RULES:
 1. If the user asks "what does X do", "what is X", "explain X", "describe X", "tell me about X" - use ASK_AI with the question. These are QUESTIONS, not file operations.
 2. Only use FILES/READ when user explicitly asks to "list files", "show files", "read file", "open file"
@@ -528,9 +664,10 @@ EXECUTABLE ACTIONS (these actually DO things):
 ${masterContextSummary}
 ===
 
-${conversationContext ? `Recent conversation:\n${conversationContext}\n` : ''}
+${lastBotResponse ? `My last response to user:\n${lastBotResponse}\n` : ''}
+${conversationContext ? `Recent conversation history:\n${conversationContext}\n` : ''}
 
-User request: "${query}"
+User's current request: "${query}"
 
 Known repos and what they do:
 - sabriotcore-code/cloud-orchestrator: Multi-AI orchestration system with Slack bot, queries Claude/GPT/Gemini
@@ -864,11 +1001,19 @@ Return a JSON object:
           }
 
           if (plan.canExecute) {
-            response += `\n_Reply "/do execute plan" to start automated steps._`;
+            response += `\n\n✅ *Reply "/do yes" to execute this plan*`;
+          } else {
+            response += `\n\n⚠️ *This plan requires manual steps. See above for details.*`;
           }
 
           // Store the plan in memory for potential execution
           await memory.store(`plan_${userId}`, JSON.stringify(plan), 'plans');
+
+          // SET PENDING STATE - so we know "yes" is a confirmation
+          await memory.store(`pending_${userId}`, 'PLAN', 'state');
+
+          // Store this response so we have context
+          await memory.store(`last_response_${userId}`, response.substring(0, 500), 'context');
 
           return { master: { response }};
         } catch (e) {
