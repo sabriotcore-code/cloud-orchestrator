@@ -480,7 +480,8 @@ function getHelpResponse() {
 // Execute a pending plan
 async function executePendingPlan(userId) {
   try {
-    const storedPlan = await memory.retrieve(`plan_${userId}`);
+    const normalizedUserId = usernameToId(userId);
+    const storedPlan = await memory.retrieve(`plan_${normalizedUserId}`);
 
     if (!storedPlan.value) {
       return { master: { response: `❌ No pending plan found. Describe what you want to do and I'll create a plan.` }};
@@ -563,6 +564,9 @@ async function executePendingPlan(userId) {
       }
 
       executionLog += `\n_Use "/do history" to see changes. Use "/do rollback" to undo._`;
+
+      // Clear the stored plan
+      await memory.store(`plan_${normalizedUserId}`, '', 'plans');
     }
     // Handle old plan format (step-based)
     else if (plan.plan) {
@@ -599,12 +603,13 @@ async function executePendingPlan(userId) {
       }
 
       executionLog += `\n*Summary:* ${stepsExecuted} steps, ${stepsFailed} failed\n`;
+
+      // Clear the stored plan
+      await memory.store(`plan_${normalizedUserId}`, '', 'plans');
     } else {
       executionLog += `⚠️ Plan format not recognized. Please try again.`;
     }
 
-    // Clear the stored plan
-    await memory.store(`plan_${userId}`, '', 'plans');
     await context.updateContext('CURRENT WORK', `Executed plan with ${stepsExecuted} fixes`);
 
     return { master: { response: executionLog }};
@@ -806,9 +811,10 @@ async function handleMasterCommand(query, userId = 'default') {
   // SMART CONTEXT SYSTEM - Makes the bot context-aware like Claude Code
   // ============================================================
 
-  // Get pending state (was there a plan just shown?)
-  const pendingState = await memory.retrieve(`pending_${userId}`);
-  const lastResponse = await memory.retrieve(`last_response_${userId}`);
+  // Get pending state (was there a plan just shown?) - use normalized userId
+  const normalizedUserId = usernameToId(userId);
+  const pendingState = await memory.retrieve(`pending_${normalizedUserId}`);
+  const lastResponse = await memory.retrieve(`last_response_${normalizedUserId}`);
 
   // PRE-INTENT SHORTCUTS - Catch obvious patterns before calling Claude
   const queryLower = query.toLowerCase().trim();
@@ -1536,15 +1542,28 @@ Return JSON:
             } else {
               response += `\n\n⚠️ *No safe auto-fixes available. Review needed.*`;
 
-              // Store for manual confirmation
-              await memory.store(`plan_${userId}`, JSON.stringify(analysis), 'plans');
-              await memory.store(`pending_${userId}`, 'PLAN', 'state');
+              // Store for manual confirmation - include owner/repo info
+              const planToStore = {
+                ...analysis,
+                owner: targetOwner,
+                repo: targetRepo
+              };
+              const storeResult = await memory.store(`plan_${usernameToId(userId)}`, JSON.stringify(planToStore), 'plans');
+              const stateResult = await memory.store(`pending_${usernameToId(userId)}`, 'PLAN', 'state');
+              console.log(`[Plan] Stored plan for ${usernameToId(userId)}: ${storeResult.success}, state: ${stateResult.success}`);
               response += `\n✅ *Reply "/do yes" to apply risky fixes*`;
             }
           } else {
             response += `\n\n⚠️ *Manual review required before applying fixes.*`;
-            await memory.store(`plan_${userId}`, JSON.stringify(analysis), 'plans');
-            await memory.store(`pending_${userId}`, 'PLAN', 'state');
+            // Store for manual confirmation - include owner/repo info
+            const planToStore = {
+              ...analysis,
+              owner: targetOwner,
+              repo: targetRepo
+            };
+            const storeResult = await memory.store(`plan_${usernameToId(userId)}`, JSON.stringify(planToStore), 'plans');
+            const stateResult = await memory.store(`pending_${usernameToId(userId)}`, 'PLAN', 'state');
+            console.log(`[Plan] Stored plan for ${usernameToId(userId)}: ${storeResult.success}, state: ${stateResult.success}`);
             response += `\n✅ *Reply "/do yes" to proceed*`;
           }
 
