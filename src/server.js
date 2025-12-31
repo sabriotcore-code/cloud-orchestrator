@@ -21,6 +21,11 @@ import * as smart from './services/smart.js';
 import * as memory from './services/memory.js';
 import * as context from './services/context.js';
 import * as changelog from './services/changelog.js';
+import * as neo4j from './services/neo4j.js';
+import * as e2b from './services/e2b.js';
+import * as firecrawl from './services/firecrawl.js';
+import * as mem0 from './services/mem0.js';
+import { registerNewServiceEndpoints } from './services/endpoints.js';
 import { initSlack, slackApp } from './services/slack.js';
 import {
   usernameToId,
@@ -87,6 +92,10 @@ app.get('/health', async (req, res) => {
       github: githubUser ? { connected: true, user: githubUser.login } : { connected: false },
       google: google.isConfigured(),
       webSearch: web.isConfigured(),
+      neo4j: neo4j.getNeo4jStatus(),
+      e2b: e2b.getE2BStatus(),
+      firecrawl: firecrawl.getFirecrawlStatus(),
+      mem0: mem0.getMem0Status(),
       uptime: process.uptime(),
       memory: process.memoryUsage(),
     });
@@ -2111,6 +2120,9 @@ app.delete('/tasks/schedule/:name', async (req, res) => {
 });
 
 // ============================================================================
+// Register new service endpoints
+registerNewServiceEndpoints(app, neo4j, e2b, firecrawl, mem0);
+
 // SLACK INTEGRATION
 // ============================================================================
 

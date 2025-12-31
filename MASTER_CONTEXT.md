@@ -112,15 +112,53 @@ Matt (Slack/Web/Mobile) ──> Bot ──> GitHub ──> Auto-Deploy
 
 ## BUSINESS CONTEXT
 
-### REI Realty Focus Areas
-- Property acquisition and analysis
-- Deal tracking and pipeline management
-- Investment metrics and reporting
-- Automation of repetitive tasks
-- Multi-AI analysis for decision support
+### REI Realty Business Model: SELLER-FINANCED NOTE PORTFOLIO
+REI Realty is NOT a traditional landlord or property flipper. They operate a **seller-financed receivables business**:
+
+1. **Acquire** properties (purchase, foreclosure, tax sales)
+2. **Sell** on installment contracts (land contracts / contracts for deed)
+3. **Act as THE LENDER** - collect monthly payments from buyers
+4. **Retain some as rentals** (RNT properties)
+
+### Portfolio Breakdown (235 properties)
+| Category | Count | % | Description |
+|----------|-------|---|-------------|
+| CURRENT | 106 | 45% | Buyers paying on schedule |
+| CURRENT! | 30 | 13% | Current with notation |
+| LATE_* | 41 | 17% | Behind on payments (14-59 days) |
+| RNT ACT | 26 | 11% | Active rentals |
+| RNT VAC | 10 | 4% | Vacant rentals |
+| MAN.REV | 13 | 6% | Need manual review |
+| Other | 9 | 4% | PRE PAY, PAID OFF, etc. |
+
+### Loan ID = Contract Portfolio Groups
+The "loan" field is an INTERNAL CONTRACT ID, not a bank loan:
+- **1980**: 60 properties (largest segment)
+- **3409**: 39 properties
+- **F&C**: 24 properties (Free & Clear - owned outright)
+- **7346, 5656, 3294**: 12 each
+- Numbers likely represent funding sources, acquisition batches, or servicer groups
+
+### Status Codes Decoded
+| Code | Meaning |
+|------|---------|
+| CURRENT | Buyer paying on schedule |
+| CURRENT! | Current with flag/note |
+| LATE_XX | XX days behind on payment |
+| RNT ACT | Active rental (retained) |
+| RNT VAC | Vacant rental |
+| RNT HLD | Rental on hold |
+| MAN.REV | Manual review needed |
+| PRE PAY | About to pay off contract |
+| PAID OFF | Contract fulfilled |
+| F&C | Free & Clear |
 
 ### Key Metrics to Track
-- (Add as defined)
+- **Collection Rate**: % of payments received on time
+- **Days Late Aging**: 14 → 30 → 59 → foreclosure
+- **Portfolio by Loan ID**: Grouping for lender/funding source tracking
+- **Rental Occupancy**: RNT ACT vs RNT VAC
+- **Pipeline**: MAN.REV → resolution tracking
 
 ## CODING PREFERENCES
 
