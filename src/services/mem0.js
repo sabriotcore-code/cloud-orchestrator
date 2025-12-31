@@ -50,12 +50,15 @@ export async function addMemory(userId, content, metadata = {}) {
   if (projectId) body.project_id = projectId;
 
   console.log('[Mem0] Adding memory for user:', userId, 'org:', orgId, 'project:', projectId);
+  console.log('[Mem0] Request body:', JSON.stringify(body));
 
-  const response = await fetch(`${MEM0_API_URL}/memories`, {
+  const response = await fetch(`${MEM0_API_URL}/memories/`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Token ${apiKey}`
+      'Authorization': `Token ${apiKey}`,
+      'x-org-id': orgId || '',
+      'x-project-id': projectId || ''
     },
     body: JSON.stringify(body)
   });
