@@ -80,20 +80,27 @@ export async function searchMemories(userId, query, options = {}) {
 
   const { limit = 10, threshold = 0.7 } = options;
 
-  const response = await fetch(`${MEM0_API_URL}/memories/search`, {
+  const body = {
+    query,
+    user_id: userId,
+    limit,
+    threshold
+  };
+
+  if (orgId) body.org_id = orgId;
+  if (projectId) body.project_id = projectId;
+
+  console.log('[Mem0] Searching memories for user:', userId, 'query:', query);
+
+  const response = await fetch(`${MEM0_API_URL}/memories/search/`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Token ${apiKey}`
+      'Authorization': `Token ${apiKey}`,
+      'x-org-id': orgId || '',
+      'x-project-id': projectId || ''
     },
-    body: JSON.stringify({
-      query,
-      user_id: userId,
-      limit,
-      threshold,
-      org_id: orgId,
-      project_id: projectId
-    })
+    body: JSON.stringify(body)
   });
 
   if (!response.ok) {
@@ -122,8 +129,14 @@ export async function getMemories(userId, options = {}) {
   if (orgId) params.append('org_id', orgId);
   if (projectId) params.append('project_id', projectId);
 
-  const response = await fetch(`${MEM0_API_URL}/memories?${params}`, {
-    headers: { 'Authorization': `Token ${apiKey}` }
+  console.log('[Mem0] Getting memories for user:', userId);
+
+  const response = await fetch(`${MEM0_API_URL}/memories/?${params}`, {
+    headers: {
+      'Authorization': `Token ${apiKey}`,
+      'x-org-id': orgId || '',
+      'x-project-id': projectId || ''
+    }
   });
 
   if (!response.ok) {
