@@ -39,19 +39,25 @@ export async function addMemory(userId, content, metadata = {}) {
   if (!apiKey) initMem0();
   if (!apiKey) throw new Error('Mem0 not configured');
 
+  const body = {
+    messages: [{ role: 'user', content }],
+    user_id: userId,
+    metadata
+  };
+
+  // Add org/project IDs if configured
+  if (orgId) body.org_id = orgId;
+  if (projectId) body.project_id = projectId;
+
+  console.log('[Mem0] Adding memory for user:', userId, 'org:', orgId, 'project:', projectId);
+
   const response = await fetch(`${MEM0_API_URL}/memories`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       'Authorization': `Token ${apiKey}`
     },
-    body: JSON.stringify({
-      messages: [{ role: 'user', content }],
-      user_id: userId,
-      metadata,
-      org_id: orgId,
-      project_id: projectId
-    })
+    body: JSON.stringify(body)
   });
 
   if (!response.ok) {
