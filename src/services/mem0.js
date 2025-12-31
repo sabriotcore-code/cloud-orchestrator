@@ -78,7 +78,7 @@ export async function searchMemories(userId, query, options = {}) {
   if (!apiKey) initMem0();
   if (!apiKey) throw new Error('Mem0 not configured');
 
-  const { limit = 10, threshold = 0.7 } = options;
+  const { limit = 10, threshold = 0.3 } = options;
 
   const body = {
     query,
