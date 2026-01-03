@@ -27,6 +27,13 @@ import * as firecrawl from './services/firecrawl.js';
 import * as mem0 from './services/mem0.js';
 import { registerNewServiceEndpoints } from './services/endpoints.js';
 import { initSlack, slackApp } from './services/slack.js';
+
+// Intelligence Systems
+import * as reflection from './services/reflection.js';
+import * as contextMemory from './services/context-memory.js';
+import * as reasoning from './services/reasoning.js';
+import * as anticipation from './services/anticipation.js';
+import * as reinforcement from './services/reinforcement.js';
 import {
   usernameToId,
   extractJson,
@@ -2182,6 +2189,348 @@ Return JSON:
     return { master: { response: `❌ Error: ${error.message}` }};
   }
 }
+
+// ============================================================================
+// INTELLIGENCE SYSTEMS - Self-improving AI capabilities
+// ============================================================================
+
+// --- Reflection & Error Learning ---
+
+app.post('/intelligence/reflection/record', async (req, res) => {
+  try {
+    const result = await reflection.recordTaskOutcome(req.body);
+    res.json({ success: true, reflection: result });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/intelligence/reflection/predict/:taskType', async (req, res) => {
+  try {
+    const predictions = await reflection.predictErrors(req.params.taskType, req.query.context);
+    res.json({ predictions });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/intelligence/reflection/lessons/:taskType', async (req, res) => {
+  try {
+    const lessons = await reflection.getApplicableLessons(req.params.taskType, req.query.context);
+    res.json({ lessons });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/intelligence/reflection/stats', async (req, res) => {
+  try {
+    const stats = await reflection.getReflectionStats();
+    res.json(stats);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/intelligence/reflection/suggestions', async (req, res) => {
+  try {
+    const suggestions = await reflection.getImprovementSuggestions();
+    res.json({ suggestions });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// --- Context Memory ---
+
+app.post('/intelligence/memory/working', async (req, res) => {
+  try {
+    const { sessionId, contextType, content, relevance } = req.body;
+    const result = await contextMemory.addToWorkingMemory(sessionId, contextType, content, relevance);
+    res.json({ success: true, memory: result });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/intelligence/memory/working/:sessionId', async (req, res) => {
+  try {
+    const memories = await contextMemory.getWorkingMemory(req.params.sessionId);
+    res.json({ memories });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/intelligence/memory/short-term', async (req, res) => {
+  try {
+    const { userId, memoryType, content, context, importance } = req.body;
+    const result = await contextMemory.storeShortTerm(userId, memoryType, content, context, importance);
+    res.json({ success: true, memory: result });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/intelligence/memory/long-term', async (req, res) => {
+  try {
+    const { userId, category, key, value, source } = req.body;
+    const result = await contextMemory.storeLongTerm(userId, category, key, value, source);
+    res.json({ success: true, memory: result });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/intelligence/memory/context/:userId', async (req, res) => {
+  try {
+    const contextStr = await contextMemory.buildContextString(
+      req.params.userId,
+      req.query.sessionId,
+      req.query.query
+    );
+    res.json({ context: contextStr });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/intelligence/memory/stats/:userId', async (req, res) => {
+  try {
+    const stats = await contextMemory.getMemoryStats(req.params.userId);
+    res.json(stats);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/intelligence/memory/consolidate/:userId', async (req, res) => {
+  try {
+    const count = await contextMemory.consolidateMemories(req.params.userId);
+    res.json({ success: true, consolidated: count });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// --- Multi-Model Reasoning Orchestra ---
+
+app.post('/intelligence/reason', async (req, res) => {
+  try {
+    const { query, options } = req.body;
+    const result = await reasoning.reason(query, options || {});
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/intelligence/reason/chain', async (req, res) => {
+  try {
+    const { query, options } = req.body;
+    const result = await reasoning.chainOfThought(query, options || {});
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/intelligence/reason/debate', async (req, res) => {
+  try {
+    const { query, options } = req.body;
+    const result = await reasoning.debateLoop(query, options || {});
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/intelligence/reason/ensemble', async (req, res) => {
+  try {
+    const { query, options } = req.body;
+    const result = await reasoning.ensembleQuery(query, options || {});
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/intelligence/reason/assess', async (req, res) => {
+  try {
+    const { query } = req.body;
+    const complexity = reasoning.assessComplexity(query);
+    const taskTypes = reasoning.classifyTaskType(query);
+    const models = reasoning.selectModels(taskTypes, complexity);
+    res.json({ complexity, taskTypes, recommendedModels: models });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// --- Proactive Anticipation ---
+
+app.post('/intelligence/anticipation/record', async (req, res) => {
+  try {
+    const { userId, action, context } = req.body;
+    const result = await anticipation.recordAction(userId, action, context);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/intelligence/anticipation/predict/:userId', async (req, res) => {
+  try {
+    const predictions = await anticipation.predictNextAction(
+      req.params.userId,
+      req.query.currentAction,
+      req.query.context ? JSON.parse(req.query.context) : null
+    );
+    res.json({ predictions });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/intelligence/anticipation/suggestions/:userId', async (req, res) => {
+  try {
+    const context = req.query.context ? JSON.parse(req.query.context) : {};
+    const suggestions = await anticipation.generateSuggestions(req.params.userId, context);
+    res.json({ suggestions });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/intelligence/anticipation/workflows/:userId', async (req, res) => {
+  try {
+    const workflows = await anticipation.analyzeWorkflows(req.params.userId);
+    res.json({ workflows });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/intelligence/anticipation/stats/:userId', async (req, res) => {
+  try {
+    const stats = await anticipation.getAnticipationStats(req.params.userId);
+    res.json(stats);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// --- Reinforcement Learning ---
+
+app.post('/intelligence/reinforcement/response', async (req, res) => {
+  try {
+    const result = await reinforcement.recordResponse(req.body);
+    res.json({ success: true, feedback: result });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/intelligence/reinforcement/rating', async (req, res) => {
+  try {
+    const { responseId, rating } = req.body;
+    await reinforcement.recordExplicitRating(responseId, rating);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/intelligence/reinforcement/signal', async (req, res) => {
+  try {
+    const { responseId, signal } = req.body;
+    await reinforcement.recordImplicitSignal(responseId, signal);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/intelligence/reinforcement/select-strategy', async (req, res) => {
+  try {
+    const { contextType, strategies, epsilon } = req.body;
+    const result = await reinforcement.selectStrategy(contextType, strategies, epsilon);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/intelligence/reinforcement/strategies', async (req, res) => {
+  try {
+    const report = await reinforcement.getStrategyReport();
+    res.json({ strategies: report });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/intelligence/reinforcement/experiment', async (req, res) => {
+  try {
+    const { name, variantA, variantB } = req.body;
+    const experiment = await reinforcement.createExperiment(name, variantA, variantB);
+    res.json({ success: true, experiment });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/intelligence/reinforcement/experiment/:name', async (req, res) => {
+  try {
+    const variant = await reinforcement.getExperimentVariant(req.params.name);
+    res.json(variant || { error: 'Experiment not found or concluded' });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/intelligence/reinforcement/improvement', async (req, res) => {
+  try {
+    const score = await reinforcement.getImprovementScore();
+    res.json(score);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/intelligence/reinforcement/stats', async (req, res) => {
+  try {
+    const stats = await reinforcement.getReinforcementStats();
+    res.json(stats);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// --- Combined Intelligence Status ---
+
+app.get('/intelligence/status', async (req, res) => {
+  try {
+    const [reflectionStats, improvementScore] = await Promise.all([
+      reflection.getReflectionStats().catch(() => ({ error: 'unavailable' })),
+      reinforcement.getImprovementScore().catch(() => ({ error: 'unavailable' }))
+    ]);
+
+    res.json({
+      status: 'active',
+      systems: {
+        reflection: reflectionStats,
+        contextMemory: 'ready',
+        reasoning: 'ready',
+        anticipation: 'ready',
+        reinforcement: improvementScore
+      },
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
 
 // ============================================================================
 // #8: GITHUB WEBHOOKS - Real-time event notifications
