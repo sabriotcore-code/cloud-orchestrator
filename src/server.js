@@ -271,7 +271,39 @@ app.get('/health', async (req, res) => {
 // AI ENDPOINTS
 // ============================================================================
 
-// Single AI query
+// Multi-AI query (parallel) - MUST come before :provider route
+app.post('/ai/all', async (req, res) => {
+  const { content, promptType = 'general' } = req.body;
+
+  if (!content) {
+    return res.status(400).json({ error: 'Content is required' });
+  }
+
+  const results = await ai.askAll(content, promptType);
+  res.json(results);
+});
+
+// Multi-AI with consensus - MUST come before :provider route
+app.post('/ai/consensus', async (req, res) => {
+  const { content, promptType = 'general', consensusMethod = 'weighted' } = req.body;
+
+  if (!content) {
+    return res.status(400).json({ error: 'Content is required' });
+  }
+
+  // Query all AIs
+  const results = await ai.askAll(content, promptType);
+
+  // Build consensus
+  const consensus = await ai.buildConsensus(results, consensusMethod);
+
+  res.json({
+    individual: results,
+    consensus,
+  });
+});
+
+// Single AI query (parameterized - must come AFTER specific routes)
 app.post('/ai/:provider', async (req, res) => {
   const { provider } = req.params;
   const { content, prompt } = req.body;
@@ -296,38 +328,6 @@ app.post('/ai/:provider', async (req, res) => {
   }
 
   res.json(result);
-});
-
-// Multi-AI query (parallel)
-app.post('/ai/all', async (req, res) => {
-  const { content, promptType = 'general' } = req.body;
-
-  if (!content) {
-    return res.status(400).json({ error: 'Content is required' });
-  }
-
-  const results = await ai.askAll(content, promptType);
-  res.json(results);
-});
-
-// Multi-AI with consensus
-app.post('/ai/consensus', async (req, res) => {
-  const { content, promptType = 'general', consensusMethod = 'weighted' } = req.body;
-
-  if (!content) {
-    return res.status(400).json({ error: 'Content is required' });
-  }
-
-  // Query all AIs
-  const results = await ai.askAll(content, promptType);
-
-  // Build consensus
-  const consensus = await ai.buildConsensus(results, consensusMethod);
-
-  res.json({
-    individual: results,
-    consensus,
-  });
 });
 
 // Review endpoint (like the original orchestrator)
