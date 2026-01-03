@@ -315,7 +315,7 @@ Review the previous answer. If you agree, expand on it. If you disagree or see i
 Multiple AI models debated this question: ${query}
 
 Their responses:
-${allResponses.map((r, i) => `[${r.model}]: ${r.response.substring(0, 400)}`).join('\n\n')}
+${allResponses.map((r, i) => `[${r.model}]: ${String(r.response || '').substring(0, 400)}`).join('\n\n')}
 
 Synthesize the best elements from all responses into one optimal answer.`;
 
@@ -368,7 +368,7 @@ export async function ensembleQuery(query, options = {}) {
 Question: ${query}
 
 Multiple AI models provided these answers:
-${responses.map(r => `[${r.model}]: ${r.content}`).join('\n\n---\n\n')}
+${responses.map(r => `[${r.model}]: ${String(r.content || '(no response)')}`).join('\n\n---\n\n')}
 
 Synthesize these into one optimal answer that:
 1. Takes the best elements from each
