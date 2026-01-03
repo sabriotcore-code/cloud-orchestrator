@@ -303,6 +303,40 @@ app.post('/ai/consensus', async (req, res) => {
   });
 });
 
+// Fast AI query - auto-routes to fastest available provider
+app.post('/ai/fast', async (req, res) => {
+  const { content, prompt } = req.body;
+  if (!content) {
+    return res.status(400).json({ error: 'Content is required' });
+  }
+
+  const start = Date.now();
+  let result;
+  let provider;
+
+  // Try providers in order of speed: Groq > Gemini > GPT-3.5
+  const providerStatus = aiProviders.getProviderStatus();
+
+  try {
+    if (providerStatus.groq) {
+      provider = 'groq';
+      result = await aiProviders.askGroq(content, { systemPrompt: prompt });
+    } else if (providerStatus.gemini) {
+      provider = 'gemini';
+      result = await ai.askGemini(content, prompt);
+    } else {
+      provider = 'gpt';
+      result = await ai.askGPT(content, prompt);
+    }
+
+    result.provider = provider;
+    result.latencyMs = Date.now() - start;
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message, provider });
+  }
+});
+
 // Single AI query (parameterized - must come AFTER specific routes)
 app.post('/ai/:provider', async (req, res) => {
   const { provider } = req.params;
@@ -323,8 +357,18 @@ app.post('/ai/:provider', async (req, res) => {
     case 'gemini':
       result = await ai.askGemini(content, prompt);
       break;
+    // Fast inference providers
+    case 'groq':
+      result = await aiProviders.askGroq(content, { systemPrompt: prompt });
+      break;
+    case 'together':
+      result = await aiProviders.askTogether(content, { systemPrompt: prompt });
+      break;
+    case 'mistral':
+      result = await aiProviders.askMistral(content, { systemPrompt: prompt });
+      break;
     default:
-      return res.status(400).json({ error: 'Invalid provider. Use: claude, gpt, or gemini' });
+      return res.status(400).json({ error: 'Invalid provider. Use: claude, gpt, gemini, groq, together, mistral' });
   }
 
   res.json(result);
