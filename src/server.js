@@ -330,7 +330,7 @@ app.post('/ai/fast', async (req, res) => {
   try {
     if (providerStatus.groq) {
       provider = 'groq';
-      result = await aiProviders.askGroq(content, { systemPrompt: prompt });
+      result = await aiProviders.fastChat(content, { system: prompt });
     } else if (providerStatus.gemini) {
       provider = 'gemini';
       result = await ai.askGemini(content, prompt);
@@ -373,15 +373,15 @@ app.post('/ai/:provider', async (req, res) => {
     case 'gemini':
       result = await ai.askGemini(content, prompt);
       break;
-    // Fast inference providers
+    // Fast inference providers (use chat() with provider name)
     case 'groq':
-      result = await aiProviders.askGroq(content, { systemPrompt: prompt });
+      result = await aiProviders.chat('groq', content, { system: prompt });
       break;
     case 'together':
-      result = await aiProviders.askTogether(content, { systemPrompt: prompt });
+      result = await aiProviders.chat('together', content, { system: prompt });
       break;
     case 'mistral':
-      result = await aiProviders.askMistral(content, { systemPrompt: prompt });
+      result = await aiProviders.chat('mistral', content, { system: prompt });
       break;
     default:
       return res.status(400).json({ error: 'Invalid provider. Use: claude, gpt, gemini, groq, together, mistral' });
