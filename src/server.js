@@ -249,6 +249,7 @@ app.get('/health', async (req, res) => {
       status: 'healthy',
       database: 'connected',
       providers,
+      cache: db.getCacheStats(),
       github: githubUser ? { connected: true, user: githubUser.login } : { connected: false },
       google: google.isConfigured(),
       webSearch: web.isConfigured(),
@@ -311,13 +312,27 @@ app.post('/ai/fast', async (req, res) => {
   }
 
   const start = Date.now();
+  const cacheKey = `fast:${prompt || ''}:${content}`;
 
-  // Check cache first (unless skipCache=true)
+  // Check in-memory LRU cache first (0ms)
   if (!skipCache) {
-    const cached = await db.getCachedResponse('fast', content);
-    if (cached) {
-      cached.latencyMs = Date.now() - start;
-      return res.json(cached);
+    const memCached = db.aiCache.get(cacheKey);
+    if (memCached) {
+      return res.json({
+        ...memCached,
+        cached: true,
+        cacheType: 'memory',
+        latencyMs: Date.now() - start
+      });
+    }
+    // Fallback to DB cache
+    const dbCached = await db.getCachedResponse('fast', content);
+    if (dbCached) {
+      // Promote to memory cache
+      db.aiCache.set(cacheKey, dbCached);
+      dbCached.latencyMs = Date.now() - start;
+      dbCached.cacheType = 'database';
+      return res.json(dbCached);
     }
   }
 
@@ -342,9 +357,10 @@ app.post('/ai/fast', async (req, res) => {
     result.provider = provider;
     result.latencyMs = Date.now() - start;
 
-    // Cache successful responses (60 min TTL)
+    // Cache successful responses in both memory (instant) and DB (persistent)
     if (result.success) {
-      db.setCachedResponse('fast', content, result, 60);
+      db.aiCache.set(cacheKey, result, 3600000); // 1hr memory cache
+      db.setCachedResponse('fast', content, result, 60); // 60min DB cache
     }
 
     res.json(result);
@@ -2706,6 +2722,37 @@ context.loadContext().then(() => {
 }).catch(err => {
   console.log('[Startup] Master context load failed:', err.message);
 });
+
+// Pre-warm AI providers on startup (run in parallel for speed)
+async function prewarmProviders() {
+  console.log('[Prewarm] Starting AI provider warm-up...');
+  const start = Date.now();
+  const warmupPromises = [];
+
+  // Groq warm-up (fastest)
+  if (process.env.GROQ_API_KEY) {
+    warmupPromises.push(
+      aiProviders.fastChat('ping', { system: 'respond with ok' })
+        .then(() => console.log('[Prewarm] Groq ready'))
+        .catch(() => console.log('[Prewarm] Groq unavailable'))
+    );
+  }
+
+  // Gemini warm-up
+  if (process.env.GEMINI_API_KEY) {
+    warmupPromises.push(
+      ai.askGemini('ping')
+        .then(() => console.log('[Prewarm] Gemini ready'))
+        .catch(() => console.log('[Prewarm] Gemini unavailable'))
+    );
+  }
+
+  await Promise.allSettled(warmupPromises);
+  console.log(`[Prewarm] Complete in ${Date.now() - start}ms`);
+}
+
+// Run pre-warm (don't await - let server start)
+prewarmProviders();
 
 app.listen(PORT, () => {
   console.log(`

@@ -1,9 +1,88 @@
 import pg from 'pg';
 import dotenv from 'dotenv';
+import crypto from 'crypto';
 
 dotenv.config();
 
 const { Pool } = pg;
+
+// ============================================================================
+// IN-MEMORY LRU CACHE (ultra-fast, ~0ms response)
+// ============================================================================
+
+class LRUCache {
+  constructor(maxSize = 500, defaultTTL = 300000) { // 5min default TTL
+    this.cache = new Map();
+    this.maxSize = maxSize;
+    this.defaultTTL = defaultTTL;
+    this.hits = 0;
+    this.misses = 0;
+  }
+
+  _hash(key) {
+    return crypto.createHash('md5').update(key).digest('hex');
+  }
+
+  get(key) {
+    const hash = this._hash(key);
+    const item = this.cache.get(hash);
+    if (!item) {
+      this.misses++;
+      return null;
+    }
+    if (Date.now() > item.expiresAt) {
+      this.cache.delete(hash);
+      this.misses++;
+      return null;
+    }
+    // Move to end (most recently used)
+    this.cache.delete(hash);
+    this.cache.set(hash, item);
+    this.hits++;
+    return item.value;
+  }
+
+  set(key, value, ttlMs = this.defaultTTL) {
+    const hash = this._hash(key);
+    // Evict oldest if at capacity
+    if (this.cache.size >= this.maxSize) {
+      const oldestKey = this.cache.keys().next().value;
+      this.cache.delete(oldestKey);
+    }
+    this.cache.set(hash, {
+      value,
+      expiresAt: Date.now() + ttlMs
+    });
+  }
+
+  stats() {
+    const total = this.hits + this.misses;
+    return {
+      size: this.cache.size,
+      maxSize: this.maxSize,
+      hits: this.hits,
+      misses: this.misses,
+      hitRate: total > 0 ? (this.hits / total * 100).toFixed(1) + '%' : '0%'
+    };
+  }
+
+  clear() {
+    this.cache.clear();
+    this.hits = 0;
+    this.misses = 0;
+  }
+}
+
+// Global cache instances
+export const aiCache = new LRUCache(200, 3600000);  // AI responses: 1hr TTL
+export const queryCache = new LRUCache(100, 60000); // DB queries: 1min TTL
+
+export function getCacheStats() {
+  return {
+    ai: aiCache.stats(),
+    query: queryCache.stats()
+  };
+}
 
 // Create connection pool
 const pool = new Pool({
