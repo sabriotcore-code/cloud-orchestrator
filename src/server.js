@@ -358,7 +358,8 @@ app.post('/ai/fast', async (req, res) => {
     result.latencyMs = Date.now() - start;
 
     // Cache successful responses in both memory (instant) and DB (persistent)
-    if (result.success) {
+    // Check for response (Groq/Gemini) or success flag
+    if (result.response || result.success) {
       db.aiCache.set(cacheKey, result, 3600000); // 1hr memory cache
       db.setCachedResponse('fast', content, result, 60); // 60min DB cache
     }
