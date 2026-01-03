@@ -51,12 +51,111 @@ app.use(cors());
 app.use('/slack/events', express.raw({ type: 'application/json' }));
 app.use(express.json({ limit: '10mb' }));
 
-// Request logging
+// Request logging with correlation ID
 app.use((req, res, next) => {
+  req.id = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
   const start = Date.now();
   res.on('finish', () => {
     const duration = Date.now() - start;
-    console.log(`[${new Date().toISOString()}] ${req.method} ${req.path} ${res.statusCode} ${duration}ms`);
+    console.log(`[${new Date().toISOString()}] [${req.id}] ${req.method} ${req.path} ${res.statusCode} ${duration}ms`);
+  });
+  next();
+});
+
+// ============================================================================
+// RATE LIMITING - Prevent abuse and DDoS
+// ============================================================================
+
+const rateLimitStore = new Map();
+const RATE_LIMIT_WINDOW_MS = 60000; // 1 minute
+const RATE_LIMITS = {
+  '/e2b/': { max: 10, windowMs: 60000 },      // Code execution: 10/min
+  '/ai/': { max: 30, windowMs: 60000 },        // AI queries: 30/min
+  '/firecrawl/': { max: 20, windowMs: 60000 }, // Web scraping: 20/min
+  'default': { max: 100, windowMs: 60000 }     // Default: 100/min
+};
+
+function getRateLimitConfig(path) {
+  for (const [prefix, config] of Object.entries(RATE_LIMITS)) {
+    if (prefix !== 'default' && path.startsWith(prefix)) {
+      return config;
+    }
+  }
+  return RATE_LIMITS.default;
+}
+
+// Clean up old rate limit entries every 5 minutes
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, data] of rateLimitStore.entries()) {
+    if (now - data.windowStart > RATE_LIMIT_WINDOW_MS * 2) {
+      rateLimitStore.delete(key);
+    }
+  }
+}, 300000);
+
+app.use((req, res, next) => {
+  // Skip rate limiting for health checks
+  if (req.path === '/' || req.path === '/health') {
+    return next();
+  }
+
+  const ip = req.ip || req.connection.remoteAddress || 'unknown';
+  const config = getRateLimitConfig(req.path);
+  const key = `${ip}:${req.path.split('/')[1] || 'root'}`;
+  const now = Date.now();
+
+  let data = rateLimitStore.get(key);
+  if (!data || now - data.windowStart > config.windowMs) {
+    data = { count: 0, windowStart: now };
+  }
+
+  data.count++;
+  rateLimitStore.set(key, data);
+
+  // Set rate limit headers
+  res.set('X-RateLimit-Limit', config.max);
+  res.set('X-RateLimit-Remaining', Math.max(0, config.max - data.count));
+  res.set('X-RateLimit-Reset', new Date(data.windowStart + config.windowMs).toISOString());
+
+  if (data.count > config.max) {
+    console.log(`[RateLimit] Blocked ${ip} on ${req.path} (${data.count}/${config.max})`);
+    return res.status(429).json({
+      error: 'Too many requests',
+      retryAfter: Math.ceil((data.windowStart + config.windowMs - now) / 1000)
+    });
+  }
+
+  next();
+});
+
+// ============================================================================
+// REQUEST TIMEOUT - Prevent hanging requests
+// ============================================================================
+
+const REQUEST_TIMEOUTS = {
+  '/e2b/': 120000,      // Code execution: 2 minutes
+  '/firecrawl/': 60000, // Web scraping: 1 minute
+  '/ai/': 45000,        // AI queries: 45 seconds
+  'default': 30000      // Default: 30 seconds
+};
+
+function getTimeoutConfig(path) {
+  for (const [prefix, timeout] of Object.entries(REQUEST_TIMEOUTS)) {
+    if (prefix !== 'default' && path.startsWith(prefix)) {
+      return timeout;
+    }
+  }
+  return REQUEST_TIMEOUTS.default;
+}
+
+app.use((req, res, next) => {
+  const timeout = getTimeoutConfig(req.path);
+  res.setTimeout(timeout, () => {
+    console.log(`[Timeout] Request ${req.id} timed out after ${timeout}ms: ${req.method} ${req.path}`);
+    if (!res.headersSent) {
+      res.status(504).json({ error: 'Request timeout', timeoutMs: timeout });
+    }
   });
   next();
 });

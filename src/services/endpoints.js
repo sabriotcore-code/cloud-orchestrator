@@ -2,6 +2,64 @@
 // NEW SERVICE ENDPOINTS - Add to server.js
 // ============================================================================
 
+// Input validation helpers
+const MAX_CODE_LENGTH = 50000; // 50KB max code
+const MAX_TIMEOUT = 120000;    // 2 minutes max
+const DANGEROUS_PATTERNS = [
+  /import\s+os/i,
+  /subprocess/i,
+  /eval\s*\(/,
+  /exec\s*\(/,
+  /__import__/,
+  /system\s*\(/,
+  /rm\s+-rf/,
+  /curl\s+.*\|.*sh/,
+  /wget\s+.*\|.*sh/
+];
+
+function validateCode(code, language) {
+  if (!code || typeof code !== 'string') {
+    return { valid: false, error: 'Code must be a non-empty string' };
+  }
+  if (code.length > MAX_CODE_LENGTH) {
+    return { valid: false, error: `Code too long (max ${MAX_CODE_LENGTH} chars)` };
+  }
+
+  // Check for dangerous patterns (basic protection, E2B sandbox provides real security)
+  for (const pattern of DANGEROUS_PATTERNS) {
+    if (pattern.test(code)) {
+      console.log(`[E2B] Potentially dangerous pattern detected: ${pattern}`);
+      // Log but don't block - E2B sandbox handles security
+    }
+  }
+
+  return { valid: true };
+}
+
+function validateTimeout(timeout) {
+  if (timeout === undefined) return 30000; // Default 30s
+  const t = parseInt(timeout);
+  if (isNaN(t) || t < 1000 || t > MAX_TIMEOUT) {
+    return 30000; // Invalid, use default
+  }
+  return t;
+}
+
+function validateUrl(url) {
+  if (!url || typeof url !== 'string') {
+    return { valid: false, error: 'URL must be a non-empty string' };
+  }
+  try {
+    const parsed = new URL(url);
+    if (!['http:', 'https:'].includes(parsed.protocol)) {
+      return { valid: false, error: 'URL must use http or https protocol' };
+    }
+    return { valid: true, url: parsed.href };
+  } catch (e) {
+    return { valid: false, error: 'Invalid URL format' };
+  }
+}
+
 export function registerNewServiceEndpoints(app, neo4j, e2b, firecrawl, mem0) {
   // NEO4J KNOWLEDGE GRAPH
   app.get('/neo4j/status', (req, res) => {
@@ -57,7 +115,15 @@ export function registerNewServiceEndpoints(app, neo4j, e2b, firecrawl, mem0) {
   app.post('/e2b/python', async (req, res) => {
     try {
       const { code, timeout } = req.body;
-      const result = await e2b.executePython(code, timeout);
+
+      // Validate input
+      const codeValidation = validateCode(code, 'python');
+      if (!codeValidation.valid) {
+        return res.status(400).json({ error: codeValidation.error });
+      }
+
+      const safeTimeout = validateTimeout(timeout);
+      const result = await e2b.executePython(code, safeTimeout);
       res.json(result);
     } catch (error) {
       res.status(500).json({ error: error.message });
@@ -67,7 +133,15 @@ export function registerNewServiceEndpoints(app, neo4j, e2b, firecrawl, mem0) {
   app.post('/e2b/javascript', async (req, res) => {
     try {
       const { code, timeout } = req.body;
-      const result = await e2b.executeJavaScript(code, timeout);
+
+      // Validate input
+      const codeValidation = validateCode(code, 'javascript');
+      if (!codeValidation.valid) {
+        return res.status(400).json({ error: codeValidation.error });
+      }
+
+      const safeTimeout = validateTimeout(timeout);
+      const result = await e2b.executeJavaScript(code, safeTimeout);
       res.json(result);
     } catch (error) {
       res.status(500).json({ error: error.message });
@@ -77,7 +151,18 @@ export function registerNewServiceEndpoints(app, neo4j, e2b, firecrawl, mem0) {
   app.post('/e2b/validate', async (req, res) => {
     try {
       const { code, language, testCases } = req.body;
-      const result = await e2b.validateCode(code, language, testCases);
+
+      // Validate input
+      const codeValidation = validateCode(code, language || 'python');
+      if (!codeValidation.valid) {
+        return res.status(400).json({ error: codeValidation.error });
+      }
+
+      // Validate language
+      const validLanguages = ['python', 'javascript'];
+      const safeLang = validLanguages.includes(language) ? language : 'python';
+
+      const result = await e2b.validateCode(code, safeLang, testCases || []);
       res.json(result);
     } catch (error) {
       res.status(500).json({ error: error.message });
@@ -92,7 +177,14 @@ export function registerNewServiceEndpoints(app, neo4j, e2b, firecrawl, mem0) {
   app.post('/firecrawl/scrape', async (req, res) => {
     try {
       const { url, options } = req.body;
-      const result = await firecrawl.scrapeUrl(url, options);
+
+      // Validate URL
+      const urlValidation = validateUrl(url);
+      if (!urlValidation.valid) {
+        return res.status(400).json({ error: urlValidation.error });
+      }
+
+      const result = await firecrawl.scrapeUrl(urlValidation.url, options);
       res.json(result);
     } catch (error) {
       res.status(500).json({ error: error.message });
@@ -102,7 +194,14 @@ export function registerNewServiceEndpoints(app, neo4j, e2b, firecrawl, mem0) {
   app.post('/firecrawl/clean', async (req, res) => {
     try {
       const { url } = req.body;
-      const result = await firecrawl.getCleanContent(url);
+
+      // Validate URL
+      const urlValidation = validateUrl(url);
+      if (!urlValidation.valid) {
+        return res.status(400).json({ error: urlValidation.error });
+      }
+
+      const result = await firecrawl.getCleanContent(urlValidation.url);
       res.json(result);
     } catch (error) {
       res.status(500).json({ error: error.message });
@@ -112,7 +211,14 @@ export function registerNewServiceEndpoints(app, neo4j, e2b, firecrawl, mem0) {
   app.post('/firecrawl/extract', async (req, res) => {
     try {
       const { url, schema } = req.body;
-      const result = await firecrawl.extractData(url, schema);
+
+      // Validate URL
+      const urlValidation = validateUrl(url);
+      if (!urlValidation.valid) {
+        return res.status(400).json({ error: urlValidation.error });
+      }
+
+      const result = await firecrawl.extractData(urlValidation.url, schema);
       res.json(result);
     } catch (error) {
       res.status(500).json({ error: error.message });

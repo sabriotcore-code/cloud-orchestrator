@@ -7,6 +7,65 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 import fetch from 'node-fetch';
 
 // ============================================================================
+// LRU CACHE - Bounded memory with automatic eviction
+// ============================================================================
+
+class LRUCache {
+  constructor(maxSize = 1000, ttlMs = 3600000) { // Default: 1000 items, 1 hour TTL
+    this.maxSize = maxSize;
+    this.ttlMs = ttlMs;
+    this.cache = new Map();
+  }
+
+  get(key) {
+    const item = this.cache.get(key);
+    if (!item) return undefined;
+
+    // Check TTL
+    if (Date.now() - item.timestamp > this.ttlMs) {
+      this.cache.delete(key);
+      return undefined;
+    }
+
+    // Move to end (most recently used)
+    this.cache.delete(key);
+    this.cache.set(key, item);
+    return item.value;
+  }
+
+  set(key, value) {
+    // Delete if exists (to update position)
+    if (this.cache.has(key)) {
+      this.cache.delete(key);
+    }
+
+    // Evict oldest if at capacity
+    while (this.cache.size >= this.maxSize) {
+      const oldestKey = this.cache.keys().next().value;
+      this.cache.delete(oldestKey);
+    }
+
+    this.cache.set(key, { value, timestamp: Date.now() });
+  }
+
+  has(key) {
+    return this.get(key) !== undefined;
+  }
+
+  delete(key) {
+    return this.cache.delete(key);
+  }
+
+  clear() {
+    this.cache.clear();
+  }
+
+  get size() {
+    return this.cache.size;
+  }
+}
+
+// ============================================================================
 // CONFIGURATION
 // ============================================================================
 
@@ -131,8 +190,8 @@ Respond with a clear technical explanation.`;
 // EMBEDDINGS - Semantic search and similarity
 // ============================================================================
 
-// In-memory embedding cache for fast semantic search
-const embeddingCache = new Map();
+// In-memory embedding cache for fast semantic search (LRU with size limit)
+const embeddingCache = new LRUCache(500, 3600000); // 500 embeddings, 1 hour TTL
 
 /**
  * Get embeddings for text
@@ -707,10 +766,11 @@ Question: ${question}`;
 }
 
 // ============================================================================
-// CONVERSATION MEMORY - Smarter context
+// CONVERSATION MEMORY - Smarter context (LRU with user limit)
 // ============================================================================
 
-const conversationHistory = new Map();
+// Limit to 200 users, 24 hour TTL - prevents unbounded memory growth
+const conversationHistory = new LRUCache(200, 86400000);
 
 /**
  * Add to conversation memory
@@ -719,17 +779,19 @@ const conversationHistory = new Map();
  * @param {string} content - Message content
  */
 export function addToConversation(userId, role, content) {
-  if (!conversationHistory.has(userId)) {
-    conversationHistory.set(userId, []);
+  let history = conversationHistory.get(userId);
+  if (!history) {
+    history = [];
   }
 
-  const history = conversationHistory.get(userId);
   history.push({ role, content, timestamp: Date.now() });
 
-  // Keep last 50 messages
+  // Keep last 50 messages per user
   if (history.length > 50) {
     history.shift();
   }
+
+  conversationHistory.set(userId, history);
 }
 
 /**

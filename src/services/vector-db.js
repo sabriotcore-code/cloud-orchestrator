@@ -7,6 +7,49 @@ import fetch from 'node-fetch';
 import { createClient } from 'redis';
 
 // ============================================================================
+// LRU CACHE - Bounded memory with automatic eviction
+// ============================================================================
+
+class LRUCache {
+  constructor(maxSize = 1000, ttlMs = 3600000) {
+    this.maxSize = maxSize;
+    this.ttlMs = ttlMs;
+    this.cache = new Map();
+  }
+
+  get(key) {
+    const item = this.cache.get(key);
+    if (!item) return undefined;
+    if (Date.now() - item.timestamp > this.ttlMs) {
+      this.cache.delete(key);
+      return undefined;
+    }
+    this.cache.delete(key);
+    this.cache.set(key, item);
+    return item.value;
+  }
+
+  set(key, value) {
+    if (this.cache.has(key)) this.cache.delete(key);
+    while (this.cache.size >= this.maxSize) {
+      const oldestKey = this.cache.keys().next().value;
+      this.cache.delete(oldestKey);
+    }
+    this.cache.set(key, { value, timestamp: Date.now() });
+  }
+
+  has(key) { return this.get(key) !== undefined; }
+  delete(key) { return this.cache.delete(key); }
+  clear() { this.cache.clear(); }
+  get size() { return this.cache.size; }
+
+  // For vector search iteration
+  entries() {
+    return Array.from(this.cache.entries()).map(([k, v]) => [k, v.value]);
+  }
+}
+
+// ============================================================================
 // CONFIGURATION
 // ============================================================================
 
@@ -17,9 +60,11 @@ const PINECONE_HOST = process.env.PINECONE_HOST; // e.g., 'code-search-xxxxx.svc
 const REDIS_URL = process.env.REDIS_URL;
 
 let redisClient = null;
+let redisReconnectAttempts = 0;
+const MAX_REDIS_RECONNECT_ATTEMPTS = 5;
 
-// In-memory fallback for when no external DB is configured
-const memoryVectorStore = new Map();
+// In-memory fallback for when no external DB is configured (LRU with limit)
+const memoryVectorStore = new LRUCache(10000, 86400000); // 10k vectors, 24h TTL
 
 // ============================================================================
 // STATUS
@@ -213,14 +258,65 @@ function cosineSimilarity(a, b) {
 async function getRedisClient() {
   if (!REDIS_URL) return null;
 
-  if (!redisClient) {
-    redisClient = createClient({ url: REDIS_URL });
-    redisClient.on('error', (err) => console.error('[Redis] Error:', err));
-    await redisClient.connect();
-    console.log('[Redis] Connected');
+  // Check if existing client is connected
+  if (redisClient && redisClient.isOpen) {
+    return redisClient;
   }
 
-  return redisClient;
+  // Check reconnect attempts
+  if (redisReconnectAttempts >= MAX_REDIS_RECONNECT_ATTEMPTS) {
+    console.log('[Redis] Max reconnection attempts reached, using memory fallback');
+    return null;
+  }
+
+  try {
+    // Close existing broken connection if any
+    if (redisClient) {
+      try {
+        await redisClient.quit();
+      } catch (e) {
+        // Ignore quit errors
+      }
+      redisClient = null;
+    }
+
+    redisClient = createClient({
+      url: REDIS_URL,
+      socket: {
+        reconnectStrategy: (retries) => {
+          if (retries > 3) {
+            console.log('[Redis] Connection failed after 3 retries');
+            return false; // Stop trying
+          }
+          return Math.min(retries * 100, 3000); // Exponential backoff, max 3s
+        },
+        connectTimeout: 10000 // 10 second timeout
+      }
+    });
+
+    redisClient.on('error', (err) => {
+      console.error('[Redis] Error:', err.message);
+    });
+
+    redisClient.on('reconnecting', () => {
+      console.log('[Redis] Reconnecting...');
+    });
+
+    redisClient.on('ready', () => {
+      console.log('[Redis] Connected and ready');
+      redisReconnectAttempts = 0; // Reset on successful connection
+    });
+
+    await redisClient.connect();
+    console.log('[Redis] Connected');
+    redisReconnectAttempts = 0;
+    return redisClient;
+  } catch (err) {
+    redisReconnectAttempts++;
+    console.error(`[Redis] Connection failed (attempt ${redisReconnectAttempts}/${MAX_REDIS_RECONNECT_ATTEMPTS}):`, err.message);
+    redisClient = null;
+    return null;
+  }
 }
 
 /**
