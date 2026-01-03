@@ -334,4 +334,53 @@ export async function getRecentHealthChecks(limit = 20) {
   return result.rows;
 }
 
+// ============================================================================
+// AI RESPONSE CACHE - Speed up repeated queries
+// ============================================================================
+
+// Simple hash function for cache keys
+function hashString(str) {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    const char = str.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash; // Convert to 32bit integer
+  }
+  return hash.toString(36);
+}
+
+export async function getCachedResponse(provider, content) {
+  const cacheKey = `ai_cache:${provider}:${hashString(content)}`;
+  try {
+    const cached = await getMemory(cacheKey);
+    if (cached) {
+      console.log(`[Cache] HIT for ${provider} query`);
+      return { ...cached, cached: true };
+    }
+  } catch (e) {
+    // Cache miss or error, proceed without cache
+  }
+  return null;
+}
+
+export async function setCachedResponse(provider, content, response, ttlMinutes = 60) {
+  const cacheKey = `ai_cache:${provider}:${hashString(content)}`;
+  const expiresAt = new Date(Date.now() + ttlMinutes * 60 * 1000);
+  try {
+    await setMemory(cacheKey, response, 'ai_cache', expiresAt);
+    console.log(`[Cache] Stored ${provider} response (TTL: ${ttlMinutes}m)`);
+  } catch (e) {
+    console.error('[Cache] Failed to store:', e.message);
+  }
+}
+
+export async function clearAICache() {
+  try {
+    await query(`DELETE FROM memory WHERE category = 'ai_cache'`);
+    console.log('[Cache] AI cache cleared');
+  } catch (e) {
+    console.error('[Cache] Failed to clear:', e.message);
+  }
+}
+
 export default pool;

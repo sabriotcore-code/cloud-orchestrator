@@ -303,14 +303,24 @@ app.post('/ai/consensus', async (req, res) => {
   });
 });
 
-// Fast AI query - auto-routes to fastest available provider
+// Fast AI query - auto-routes to fastest available provider with caching
 app.post('/ai/fast', async (req, res) => {
-  const { content, prompt } = req.body;
+  const { content, prompt, skipCache } = req.body;
   if (!content) {
     return res.status(400).json({ error: 'Content is required' });
   }
 
   const start = Date.now();
+
+  // Check cache first (unless skipCache=true)
+  if (!skipCache) {
+    const cached = await db.getCachedResponse('fast', content);
+    if (cached) {
+      cached.latencyMs = Date.now() - start;
+      return res.json(cached);
+    }
+  }
+
   let result;
   let provider;
 
@@ -331,6 +341,12 @@ app.post('/ai/fast', async (req, res) => {
 
     result.provider = provider;
     result.latencyMs = Date.now() - start;
+
+    // Cache successful responses (60 min TTL)
+    if (result.success) {
+      db.setCachedResponse('fast', content, result, 60);
+    }
+
     res.json(result);
   } catch (error) {
     res.status(500).json({ error: error.message, provider });
