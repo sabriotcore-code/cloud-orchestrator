@@ -5,7 +5,6 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import { v4 as uuidv4 } from 'uuid';
-import { createClient } from 'redis';
 
 import * as db from './db/index.js';
 import * as ai from './services/ai.js';
@@ -67,35 +66,70 @@ app.use((req, res, next) => {
 // RATE LIMITING - Prevent abuse and DDoS (Redis-backed for distributed)
 // ============================================================================
 
-// Redis client for rate limiting (shared across instances)
-let rateLimitRedis = null;
-const REDIS_URL = process.env.REDIS_URL;
+// Database-backed rate limiting (shared across all instances via PostgreSQL)
+let rateLimitTableReady = false;
 
-async function getRateLimitRedis() {
-  if (!REDIS_URL) return null;
-  if (rateLimitRedis && rateLimitRedis.isOpen) return rateLimitRedis;
-
+async function ensureRateLimitTable() {
+  if (rateLimitTableReady) return true;
   try {
-    rateLimitRedis = createClient({
-      url: REDIS_URL,
-      socket: { connectTimeout: 5000 }
-    });
-    rateLimitRedis.on('error', (err) => {
-      console.error('[RateLimit Redis] Error:', err.message);
-    });
-    await rateLimitRedis.connect();
-    console.log('[RateLimit] Using Redis for distributed rate limiting');
-    return rateLimitRedis;
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS rate_limits (
+        key VARCHAR(255) PRIMARY KEY,
+        count INTEGER DEFAULT 1,
+        window_start TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    // Clean old entries on startup
+    await db.query(`DELETE FROM rate_limits WHERE window_start < NOW() - INTERVAL '2 minutes'`);
+    rateLimitTableReady = true;
+    console.log('[RateLimit] Using PostgreSQL for distributed rate limiting');
+    return true;
   } catch (err) {
-    console.log('[RateLimit] Redis unavailable, using in-memory fallback');
-    rateLimitRedis = null;
-    return null;
+    console.error('[RateLimit] Failed to create table:', err.message);
+    return false;
   }
 }
 
-// Fallback in-memory store (per-instance)
-const rateLimitStore = new Map();
-const RATE_LIMIT_WINDOW_MS = 60000; // 1 minute
+async function checkRateLimitDB(key, maxRequests, windowMs) {
+  const windowSec = Math.ceil(windowMs / 1000);
+  try {
+    // Atomic upsert with increment
+    const result = await db.query(`
+      INSERT INTO rate_limits (key, count, window_start)
+      VALUES ($1, 1, NOW())
+      ON CONFLICT (key) DO UPDATE SET
+        count = CASE
+          WHEN rate_limits.window_start < NOW() - INTERVAL '1 second' * $2
+          THEN 1
+          ELSE rate_limits.count + 1
+        END,
+        window_start = CASE
+          WHEN rate_limits.window_start < NOW() - INTERVAL '1 second' * $2
+          THEN NOW()
+          ELSE rate_limits.window_start
+        END
+      RETURNING count, window_start
+    `, [key, windowSec]);
+
+    return {
+      count: result.rows[0].count,
+      windowStart: result.rows[0].window_start
+    };
+  } catch (err) {
+    console.error('[RateLimit DB] Error:', err.message);
+    return null; // Fail open
+  }
+}
+
+// Clean up old rate limit entries every 2 minutes
+setInterval(async () => {
+  if (rateLimitTableReady) {
+    try {
+      await db.query(`DELETE FROM rate_limits WHERE window_start < NOW() - INTERVAL '2 minutes'`);
+    } catch (e) { /* ignore cleanup errors */ }
+  }
+}, 120000);
+
 const RATE_LIMITS = {
   '/e2b/': { max: 10, windowMs: 60000 },      // Code execution: 10/min
   '/ai/': { max: 30, windowMs: 60000 },        // AI queries: 30/min
@@ -112,17 +146,7 @@ function getRateLimitConfig(path) {
   return RATE_LIMITS.default;
 }
 
-// Clean up old rate limit entries every 5 minutes (in-memory fallback only)
-setInterval(() => {
-  const now = Date.now();
-  for (const [key, data] of rateLimitStore.entries()) {
-    if (now - data.windowStart > RATE_LIMIT_WINDOW_MS * 2) {
-      rateLimitStore.delete(key);
-    }
-  }
-}, 300000);
-
-// Rate limit middleware - Redis-backed with in-memory fallback
+// Rate limit middleware - PostgreSQL-backed for distributed rate limiting
 app.use(async (req, res, next) => {
   // Skip rate limiting for health checks
   if (req.path === '/' || req.path === '/health') {
@@ -132,53 +156,32 @@ app.use(async (req, res, next) => {
   const ip = req.headers['x-forwarded-for']?.split(',')[0] || req.ip || req.connection.remoteAddress || 'unknown';
   const config = getRateLimitConfig(req.path);
   const endpoint = req.path.split('/')[1] || 'root';
-  const key = `ratelimit:${ip}:${endpoint}`;
-  const windowSec = Math.ceil(config.windowMs / 1000);
+  const key = `${ip}:${endpoint}`;
 
   try {
-    const redis = await getRateLimitRedis();
+    // Ensure rate limit table exists
+    await ensureRateLimitTable();
 
-    if (redis) {
-      // Redis-based rate limiting (distributed)
-      const count = await redis.incr(key);
-      if (count === 1) {
-        await redis.expire(key, windowSec);
-      }
-      const ttl = await redis.ttl(key);
+    // Use PostgreSQL for distributed rate limiting
+    const result = await checkRateLimitDB(key, config.max, config.windowMs);
 
-      res.set('X-RateLimit-Limit', config.max);
-      res.set('X-RateLimit-Remaining', Math.max(0, config.max - count));
-      res.set('X-RateLimit-Reset', new Date(Date.now() + ttl * 1000).toISOString());
-
-      if (count > config.max) {
-        console.log(`[RateLimit] Blocked ${ip} on ${req.path} (${count}/${config.max})`);
-        return res.status(429).json({
-          error: 'Too many requests',
-          retryAfter: ttl
-        });
-      }
-    } else {
-      // In-memory fallback (per-instance)
-      const now = Date.now();
-      let data = rateLimitStore.get(key);
-      if (!data || now - data.windowStart > config.windowMs) {
-        data = { count: 0, windowStart: now };
-      }
-      data.count++;
-      rateLimitStore.set(key, data);
+    if (result) {
+      const resetTime = new Date(result.windowStart).getTime() + config.windowMs;
+      const ttl = Math.ceil((resetTime - Date.now()) / 1000);
 
       res.set('X-RateLimit-Limit', config.max);
-      res.set('X-RateLimit-Remaining', Math.max(0, config.max - data.count));
-      res.set('X-RateLimit-Reset', new Date(data.windowStart + config.windowMs).toISOString());
+      res.set('X-RateLimit-Remaining', Math.max(0, config.max - result.count));
+      res.set('X-RateLimit-Reset', new Date(resetTime).toISOString());
 
-      if (data.count > config.max) {
-        console.log(`[RateLimit] Blocked ${ip} on ${req.path} (${data.count}/${config.max})`);
+      if (result.count > config.max) {
+        console.log(`[RateLimit] Blocked ${ip} on ${req.path} (${result.count}/${config.max})`);
         return res.status(429).json({
           error: 'Too many requests',
-          retryAfter: Math.ceil((data.windowStart + config.windowMs - now) / 1000)
+          retryAfter: Math.max(1, ttl)
         });
       }
     }
+    // If result is null (DB error), fail open and allow request
   } catch (err) {
     console.error('[RateLimit] Error:', err.message);
     // On error, allow request through (fail-open)
