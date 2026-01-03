@@ -2516,4 +2516,33 @@ Slack Commands:
 `);
 });
 
+// ============================================================================
+// GLOBAL ERROR HANDLERS - Prevent silent crashes
+// ============================================================================
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('[CRITICAL] Unhandled Promise Rejection:', reason);
+  console.error('Promise:', promise);
+  // Don't exit - log and continue (production resilience)
+});
+
+process.on('uncaughtException', (error) => {
+  console.error('[CRITICAL] Uncaught Exception:', error);
+  // For uncaught exceptions, we should exit after logging
+  // Give time to flush logs before exit
+  setTimeout(() => process.exit(1), 1000);
+});
+
+// Graceful shutdown on SIGTERM (Railway sends this)
+process.on('SIGTERM', async () => {
+  console.log('[Shutdown] SIGTERM received, closing connections...');
+  try {
+    await neo4j.closeNeo4j();
+    console.log('[Shutdown] Neo4j closed');
+  } catch (e) {
+    console.log('[Shutdown] Neo4j close error:', e.message);
+  }
+  process.exit(0);
+});
+
 export default app;

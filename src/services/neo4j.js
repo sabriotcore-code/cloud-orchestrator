@@ -58,6 +58,54 @@ async function runQuery(cypher, params = {}) {
 }
 
 // ============================================================================
+// SECURITY - Input Validation
+// ============================================================================
+
+// Valid Neo4j labels: alphanumeric and underscores only
+const VALID_LABEL_REGEX = /^[A-Za-z][A-Za-z0-9_]*$/;
+const VALID_KEY_REGEX = /^[A-Za-z][A-Za-z0-9_]*$/;
+
+// Allowed labels whitelist (prevents injection via arbitrary labels)
+const ALLOWED_LABELS = new Set([
+  'Property', 'Person', 'Organization', 'User', 'Conversation', 'Fact',
+  'Tenant', 'Lender', 'Contact', 'Document', 'Note', 'Task', 'Event'
+]);
+
+function validateLabel(label) {
+  if (!label || typeof label !== 'string') {
+    throw new Error('Invalid label: must be a non-empty string');
+  }
+  if (!VALID_LABEL_REGEX.test(label)) {
+    throw new Error(`Invalid label: "${label}" contains invalid characters`);
+  }
+  if (!ALLOWED_LABELS.has(label)) {
+    throw new Error(`Invalid label: "${label}" is not in the allowed list`);
+  }
+  return label;
+}
+
+function validateKey(key) {
+  if (!key || typeof key !== 'string') {
+    throw new Error('Invalid key: must be a non-empty string');
+  }
+  if (!VALID_KEY_REGEX.test(key)) {
+    throw new Error(`Invalid key: "${key}" contains invalid characters`);
+  }
+  return key;
+}
+
+function validateRelationType(relType) {
+  if (!relType || typeof relType !== 'string') {
+    throw new Error('Invalid relationship type: must be a non-empty string');
+  }
+  // Relationship types: uppercase with underscores
+  if (!/^[A-Z][A-Z0-9_]*$/.test(relType)) {
+    throw new Error(`Invalid relationship type: "${relType}" must be UPPERCASE_WITH_UNDERSCORES`);
+  }
+  return relType;
+}
+
+// ============================================================================
 // ENTITY OPERATIONS
 // ============================================================================
 
@@ -65,6 +113,15 @@ async function runQuery(cypher, params = {}) {
  * Create or update an entity node
  */
 export async function upsertEntity(label, properties, uniqueKey = 'id') {
+  // Validate inputs to prevent Cypher injection
+  validateLabel(label);
+  validateKey(uniqueKey);
+
+  // Validate property keys
+  for (const key of Object.keys(properties)) {
+    validateKey(key);
+  }
+
   const propString = Object.keys(properties)
     .map(k => `${k}: $${k}`)
     .join(', ');
@@ -88,6 +145,14 @@ export async function createRelationship(
   relType,
   properties = {}
 ) {
+  // Validate inputs to prevent Cypher injection
+  validateLabel(fromLabel);
+  validateLabel(toLabel);
+  validateRelationType(relType);
+  for (const key of Object.keys(properties)) {
+    validateKey(key);
+  }
+
   const propString = Object.keys(properties).length > 0
     ? `{${Object.keys(properties).map(k => `${k}: $${k}`).join(', ')}}`
     : '';
@@ -106,6 +171,14 @@ export async function createRelationship(
  * Find entities by label and properties
  */
 export async function findEntities(label, filters = {}, limit = 100) {
+  // Validate inputs to prevent Cypher injection
+  validateLabel(label);
+  for (const key of Object.keys(filters)) {
+    validateKey(key);
+  }
+  // Validate limit is a safe integer
+  const safeLimit = Math.min(Math.max(1, parseInt(limit) || 100), 1000);
+
   const whereClause = Object.keys(filters).length > 0
     ? 'WHERE ' + Object.keys(filters).map(k => `n.${k} = $${k}`).join(' AND ')
     : '';
@@ -114,7 +187,7 @@ export async function findEntities(label, filters = {}, limit = 100) {
     MATCH (n:${label})
     ${whereClause}
     RETURN n
-    LIMIT ${limit}
+    LIMIT ${safeLimit}
   `;
 
   const result = await runQuery(cypher, filters);
@@ -125,9 +198,14 @@ export async function findEntities(label, filters = {}, limit = 100) {
  * Get entity with all relationships
  */
 export async function getEntityWithRelations(label, id, depth = 1) {
+  // Validate inputs to prevent Cypher injection
+  validateLabel(label);
+  // Validate depth is a safe integer (1-5)
+  const safeDepth = Math.min(Math.max(1, parseInt(depth) || 1), 5);
+
   const cypher = `
     MATCH (n:${label} {id: $id})
-    OPTIONAL MATCH path = (n)-[*1..${depth}]-(related)
+    OPTIONAL MATCH path = (n)-[*1..${safeDepth}]-(related)
     RETURN n, collect(distinct {
       node: related,
       relationship: [r in relationships(path) | type(r)]

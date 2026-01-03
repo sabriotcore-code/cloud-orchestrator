@@ -232,6 +232,9 @@ export async function logUsage(provider, tokensIn, tokensOut, costUsd, endpoint 
 }
 
 export async function getUsageSummary(days = 30) {
+  // Validate days to prevent SQL injection (must be positive integer 1-365)
+  const safeDays = Math.min(Math.max(1, parseInt(days) || 30), 365);
+
   const result = await query(
     `SELECT
        provider,
@@ -241,9 +244,10 @@ export async function getUsageSummary(days = 30) {
        SUM(cost_usd) as total_cost,
        DATE(created_at) as date
      FROM usage_logs
-     WHERE created_at > NOW() - INTERVAL '${days} days'
+     WHERE created_at > NOW() - INTERVAL '1 day' * $1
      GROUP BY provider, DATE(created_at)
-     ORDER BY date DESC, provider`
+     ORDER BY date DESC, provider`,
+    [safeDays]
   );
   return result.rows;
 }

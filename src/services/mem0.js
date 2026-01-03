@@ -49,8 +49,8 @@ export async function addMemory(userId, content, metadata = {}) {
   if (orgId) body.org_id = orgId;
   if (projectId) body.project_id = projectId;
 
-  console.log('[Mem0] Adding memory for user:', userId, 'org:', orgId, 'project:', projectId);
-  console.log('[Mem0] Request body:', JSON.stringify(body));
+  // Note: Removed detailed logging to prevent sensitive data exposure
+  console.log('[Mem0] Adding memory for user:', userId);
 
   const response = await fetch(`${MEM0_API_URL}/memories/`, {
     method: 'POST',
