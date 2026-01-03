@@ -5,6 +5,7 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import { v4 as uuidv4 } from 'uuid';
+import { createClient } from 'redis';
 
 import * as db from './db/index.js';
 import * as ai from './services/ai.js';
@@ -63,9 +64,36 @@ app.use((req, res, next) => {
 });
 
 // ============================================================================
-// RATE LIMITING - Prevent abuse and DDoS
+// RATE LIMITING - Prevent abuse and DDoS (Redis-backed for distributed)
 // ============================================================================
 
+// Redis client for rate limiting (shared across instances)
+let rateLimitRedis = null;
+const REDIS_URL = process.env.REDIS_URL;
+
+async function getRateLimitRedis() {
+  if (!REDIS_URL) return null;
+  if (rateLimitRedis && rateLimitRedis.isOpen) return rateLimitRedis;
+
+  try {
+    rateLimitRedis = createClient({
+      url: REDIS_URL,
+      socket: { connectTimeout: 5000 }
+    });
+    rateLimitRedis.on('error', (err) => {
+      console.error('[RateLimit Redis] Error:', err.message);
+    });
+    await rateLimitRedis.connect();
+    console.log('[RateLimit] Using Redis for distributed rate limiting');
+    return rateLimitRedis;
+  } catch (err) {
+    console.log('[RateLimit] Redis unavailable, using in-memory fallback');
+    rateLimitRedis = null;
+    return null;
+  }
+}
+
+// Fallback in-memory store (per-instance)
 const rateLimitStore = new Map();
 const RATE_LIMIT_WINDOW_MS = 60000; // 1 minute
 const RATE_LIMITS = {
@@ -84,7 +112,7 @@ function getRateLimitConfig(path) {
   return RATE_LIMITS.default;
 }
 
-// Clean up old rate limit entries every 5 minutes
+// Clean up old rate limit entries every 5 minutes (in-memory fallback only)
 setInterval(() => {
   const now = Date.now();
   for (const [key, data] of rateLimitStore.entries()) {
@@ -94,36 +122,66 @@ setInterval(() => {
   }
 }, 300000);
 
-app.use((req, res, next) => {
+// Rate limit middleware - Redis-backed with in-memory fallback
+app.use(async (req, res, next) => {
   // Skip rate limiting for health checks
   if (req.path === '/' || req.path === '/health') {
     return next();
   }
 
-  const ip = req.ip || req.connection.remoteAddress || 'unknown';
+  const ip = req.headers['x-forwarded-for']?.split(',')[0] || req.ip || req.connection.remoteAddress || 'unknown';
   const config = getRateLimitConfig(req.path);
-  const key = `${ip}:${req.path.split('/')[1] || 'root'}`;
-  const now = Date.now();
+  const endpoint = req.path.split('/')[1] || 'root';
+  const key = `ratelimit:${ip}:${endpoint}`;
+  const windowSec = Math.ceil(config.windowMs / 1000);
 
-  let data = rateLimitStore.get(key);
-  if (!data || now - data.windowStart > config.windowMs) {
-    data = { count: 0, windowStart: now };
-  }
+  try {
+    const redis = await getRateLimitRedis();
 
-  data.count++;
-  rateLimitStore.set(key, data);
+    if (redis) {
+      // Redis-based rate limiting (distributed)
+      const count = await redis.incr(key);
+      if (count === 1) {
+        await redis.expire(key, windowSec);
+      }
+      const ttl = await redis.ttl(key);
 
-  // Set rate limit headers
-  res.set('X-RateLimit-Limit', config.max);
-  res.set('X-RateLimit-Remaining', Math.max(0, config.max - data.count));
-  res.set('X-RateLimit-Reset', new Date(data.windowStart + config.windowMs).toISOString());
+      res.set('X-RateLimit-Limit', config.max);
+      res.set('X-RateLimit-Remaining', Math.max(0, config.max - count));
+      res.set('X-RateLimit-Reset', new Date(Date.now() + ttl * 1000).toISOString());
 
-  if (data.count > config.max) {
-    console.log(`[RateLimit] Blocked ${ip} on ${req.path} (${data.count}/${config.max})`);
-    return res.status(429).json({
-      error: 'Too many requests',
-      retryAfter: Math.ceil((data.windowStart + config.windowMs - now) / 1000)
-    });
+      if (count > config.max) {
+        console.log(`[RateLimit] Blocked ${ip} on ${req.path} (${count}/${config.max})`);
+        return res.status(429).json({
+          error: 'Too many requests',
+          retryAfter: ttl
+        });
+      }
+    } else {
+      // In-memory fallback (per-instance)
+      const now = Date.now();
+      let data = rateLimitStore.get(key);
+      if (!data || now - data.windowStart > config.windowMs) {
+        data = { count: 0, windowStart: now };
+      }
+      data.count++;
+      rateLimitStore.set(key, data);
+
+      res.set('X-RateLimit-Limit', config.max);
+      res.set('X-RateLimit-Remaining', Math.max(0, config.max - data.count));
+      res.set('X-RateLimit-Reset', new Date(data.windowStart + config.windowMs).toISOString());
+
+      if (data.count > config.max) {
+        console.log(`[RateLimit] Blocked ${ip} on ${req.path} (${data.count}/${config.max})`);
+        return res.status(429).json({
+          error: 'Too many requests',
+          retryAfter: Math.ceil((data.windowStart + config.windowMs - now) / 1000)
+        });
+      }
+    }
+  } catch (err) {
+    console.error('[RateLimit] Error:', err.message);
+    // On error, allow request through (fail-open)
   }
 
   next();
