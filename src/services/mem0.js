@@ -523,8 +523,8 @@ export function getMem0Status() {
   return {
     configured: !!apiKey || !!process.env.MEM0_API_KEY,
     ready: !!apiKey,
-    hasOrg: !!orgId,
-    hasProject: !!projectId
+    hasOrg: !!orgId || !!process.env.MEM0_ORG_ID,
+    hasProject: !!projectId || !!process.env.MEM0_PROJECT_ID
   };
 }
 

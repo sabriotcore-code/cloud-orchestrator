@@ -2398,10 +2398,87 @@ function formatSlackResponseInternal(command, result) {
 }
 
 // ============================================================================
+// SERVICE INITIALIZATION
+// ============================================================================
+
+async function initializeServices() {
+  console.log('[Startup] Initializing services...');
+
+  // Initialize Neo4j Knowledge Graph
+  try {
+    neo4j.initNeo4j();
+    console.log('[Startup] ✓ Neo4j initialized');
+  } catch (e) {
+    console.log('[Startup] ✗ Neo4j failed:', e.message);
+  }
+
+  // Initialize E2B Code Execution
+  try {
+    e2b.initE2B();
+    console.log('[Startup] ✓ E2B initialized');
+  } catch (e) {
+    console.log('[Startup] ✗ E2B failed:', e.message);
+  }
+
+  // Initialize Firecrawl Web Scraping
+  try {
+    firecrawl.initFirecrawl();
+    console.log('[Startup] ✓ Firecrawl initialized');
+  } catch (e) {
+    console.log('[Startup] ✗ Firecrawl failed:', e.message);
+  }
+
+  // Initialize Mem0 Long-term Memory
+  try {
+    mem0.initMem0();
+    console.log('[Startup] ✓ Mem0 initialized');
+  } catch (e) {
+    console.log('[Startup] ✗ Mem0 failed:', e.message);
+  }
+
+  console.log('[Startup] Service initialization complete');
+}
+
+// ============================================================================
+// NEO4J KEEP-ALIVE (prevents free tier from pausing)
+// ============================================================================
+
+async function neo4jKeepAlive() {
+  const status = neo4j.getNeo4jStatus();
+  if (!status.connected) {
+    console.log('[KeepAlive] Neo4j not connected, attempting reconnect...');
+    neo4j.initNeo4j();
+    return;
+  }
+
+  try {
+    // Simple query to keep the connection alive
+    await neo4j.findEntities('Property', {}, 1);
+    console.log(`[KeepAlive] Neo4j ping successful at ${new Date().toISOString()}`);
+  } catch (e) {
+    console.log('[KeepAlive] Neo4j ping failed:', e.message);
+    // Try to reconnect
+    neo4j.initNeo4j();
+  }
+}
+
+// Run Neo4j keep-alive every 12 hours (twice daily keeps free tier active)
+const NEO4J_KEEPALIVE_INTERVAL = 12 * 60 * 60 * 1000; // 12 hours in ms
+setInterval(neo4jKeepAlive, NEO4J_KEEPALIVE_INTERVAL);
+
+// ============================================================================
 // START SERVER
 // ============================================================================
 
 const slackStatus = process.env.SLACK_BOT_TOKEN ? 'enabled' : 'disabled';
+
+// Initialize all services on startup
+initializeServices().then(() => {
+  // Run initial keep-alive after services are initialized
+  setTimeout(neo4jKeepAlive, 5000);
+}).catch(err => {
+  console.log('[Startup] Service initialization error:', err.message);
+});
 
 // Load master context on startup
 context.loadContext().then(() => {
