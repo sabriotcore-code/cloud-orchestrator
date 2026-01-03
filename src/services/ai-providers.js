@@ -53,7 +53,7 @@ const providers = {
   groq: {
     apiKey: process.env.GROQ_API_KEY,
     baseUrl: 'https://api.groq.com/openai/v1',
-    model: 'llama-3.1-70b-versatile',
+    model: 'llama-3.3-70b-versatile',
     costPer1kIn: 0.00059,
     costPer1kOut: 0.00079,
     maxTokens: 8000
