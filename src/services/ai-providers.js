@@ -13,10 +13,10 @@ import fetch from 'node-fetch';
 // ============================================================================
 
 const providers = {
-  // Claude 3.5 Sonnet (Anthropic)
+  // Claude Sonnet 4 (Anthropic)
   claude: {
     client: null,
-    model: 'claude-3-5-sonnet-20241022',
+    model: 'claude-sonnet-4-20250514',
     costPer1kIn: 0.003,
     costPer1kOut: 0.015,
     maxTokens: 8192
