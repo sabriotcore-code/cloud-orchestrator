@@ -495,24 +495,21 @@ async function queryModel(model, prompt) {
   try {
     let response;
 
-    switch (model) {
-      case 'claude':
-        response = await aiProviders.askClaude(prompt);
-        break;
-      case 'gpt4':
-        response = await aiProviders.askGPT4(prompt);
-        break;
-      case 'gemini':
-        response = await aiProviders.askGemini(prompt);
-        break;
-      case 'groq':
-        response = await aiProviders.fastChat(prompt);
-        break;
-      case 'perplexity':
-        response = await aiProviders.askPerplexity(prompt);
-        break;
-      default:
-        response = await aiProviders.fastChat(prompt);
+    // Map model names to ai-providers format
+    const providerMap = {
+      'claude': 'claude',
+      'gpt4': 'gpt4o',
+      'gemini': 'gemini',
+      'groq': 'groq',
+      'perplexity': 'perplexity'
+    };
+
+    const provider = providerMap[model] || 'groq';
+
+    if (provider === 'groq') {
+      response = await aiProviders.fastChat(prompt);
+    } else {
+      response = await aiProviders.chat(provider, prompt);
     }
 
     return {
