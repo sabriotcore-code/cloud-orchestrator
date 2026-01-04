@@ -6,6 +6,7 @@
 import fetch from 'node-fetch';
 import { createClient } from 'redis';
 import { LRUCache } from '../utils/lru-cache.js';
+import { cosineSimilarity } from '../utils/math.js';
 
 // ============================================================================
 // CONFIGURATION
@@ -191,22 +192,6 @@ function getMemoryNamespaces() {
     namespaces.add(ns);
   }
   return Array.from(namespaces);
-}
-
-function cosineSimilarity(a, b) {
-  if (!a || !b || a.length !== b.length) return 0;
-
-  let dotProduct = 0;
-  let normA = 0;
-  let normB = 0;
-
-  for (let i = 0; i < a.length; i++) {
-    dotProduct += a[i] * b[i];
-    normA += a[i] * a[i];
-    normB += b[i] * b[i];
-  }
-
-  return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
 }
 
 // ============================================================================
