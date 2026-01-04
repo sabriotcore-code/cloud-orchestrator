@@ -5,54 +5,7 @@
 
 import fetch from 'node-fetch';
 import { createClient } from 'redis';
-
-// ============================================================================
-// LRU CACHE - Bounded memory with automatic eviction
-// ============================================================================
-
-class LRUCache {
-  constructor(maxSize = 1000, ttlMs = 3600000) {
-    this.maxSize = maxSize;
-    this.ttlMs = ttlMs;
-    this.cache = new Map();
-  }
-
-  get(key) {
-    const item = this.cache.get(key);
-    if (!item) return undefined;
-    if (Date.now() - item.timestamp > this.ttlMs) {
-      this.cache.delete(key);
-      return undefined;
-    }
-    this.cache.delete(key);
-    this.cache.set(key, item);
-    return item.value;
-  }
-
-  set(key, value) {
-    if (this.cache.has(key)) this.cache.delete(key);
-    while (this.cache.size >= this.maxSize) {
-      const oldestKey = this.cache.keys().next().value;
-      this.cache.delete(oldestKey);
-    }
-    this.cache.set(key, { value, timestamp: Date.now() });
-  }
-
-  has(key) { return this.get(key) !== undefined; }
-  delete(key) { return this.cache.delete(key); }
-  clear() { this.cache.clear(); }
-  get size() { return this.cache.size; }
-
-  // For vector search iteration
-  entries() {
-    return Array.from(this.cache.entries()).map(([k, v]) => [k, v.value]);
-  }
-
-  // For namespace iteration
-  keys() {
-    return this.cache.keys();
-  }
-}
+import { LRUCache } from '../utils/lru-cache.js';
 
 // ============================================================================
 // CONFIGURATION

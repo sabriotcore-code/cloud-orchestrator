@@ -5,65 +5,7 @@
 
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import fetch from 'node-fetch';
-
-// ============================================================================
-// LRU CACHE - Bounded memory with automatic eviction
-// ============================================================================
-
-class LRUCache {
-  constructor(maxSize = 1000, ttlMs = 3600000) { // Default: 1000 items, 1 hour TTL
-    this.maxSize = maxSize;
-    this.ttlMs = ttlMs;
-    this.cache = new Map();
-  }
-
-  get(key) {
-    const item = this.cache.get(key);
-    if (!item) return undefined;
-
-    // Check TTL
-    if (Date.now() - item.timestamp > this.ttlMs) {
-      this.cache.delete(key);
-      return undefined;
-    }
-
-    // Move to end (most recently used)
-    this.cache.delete(key);
-    this.cache.set(key, item);
-    return item.value;
-  }
-
-  set(key, value) {
-    // Delete if exists (to update position)
-    if (this.cache.has(key)) {
-      this.cache.delete(key);
-    }
-
-    // Evict oldest if at capacity
-    while (this.cache.size >= this.maxSize) {
-      const oldestKey = this.cache.keys().next().value;
-      this.cache.delete(oldestKey);
-    }
-
-    this.cache.set(key, { value, timestamp: Date.now() });
-  }
-
-  has(key) {
-    return this.get(key) !== undefined;
-  }
-
-  delete(key) {
-    return this.cache.delete(key);
-  }
-
-  clear() {
-    this.cache.clear();
-  }
-
-  get size() {
-    return this.cache.size;
-  }
-}
+import { LRUCache } from '../utils/lru-cache.js';
 
 // ============================================================================
 // CONFIGURATION
