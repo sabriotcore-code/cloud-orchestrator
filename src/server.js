@@ -69,6 +69,11 @@ import * as crewAI from './services/crew-ai.js';
 import * as taskRouter from './services/task-router.js';
 import * as toolMaster from './services/tool-master.js';
 
+// Cognitive Architecture Phase 3 - Grounding Systems
+import * as perplexity from './services/perplexity.js';
+import * as multiSourceVerify from './services/multi-source-verify.js';
+import * as codeSandbox from './services/code-sandbox.js';
+
 import {
   usernameToId,
   extractJson,
@@ -4820,11 +4825,210 @@ app.post('/cognitive/tools/execute-with', async (req, res) => {
 app.get('/cognitive/tools/history', (req, res) => res.json(toolMaster.getExecutionHistory(parseInt(req.query.limit) || 50)));
 app.get('/cognitive/tools/stats', (req, res) => res.json(toolMaster.getExecutionStats()));
 
+// ============================================================================
+// COGNITIVE ARCHITECTURE PHASE 3 - GROUNDING SYSTEMS
+// ============================================================================
+
+// --- PERPLEXITY WEB GROUNDING ---
+app.post('/cognitive/perplexity/search', async (req, res) => {
+  try {
+    const { query, recencyFilter, returnCitations, maxTokens } = req.body;
+    if (!query) return res.status(400).json({ error: 'query required' });
+    const result = await perplexity.search(query, { recencyFilter, returnCitations, maxTokens });
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/cognitive/perplexity/news', async (req, res) => {
+  try {
+    const { topic, recency } = req.body;
+    if (!topic) return res.status(400).json({ error: 'topic required' });
+    const result = await perplexity.searchNews(topic, { recency });
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/cognitive/perplexity/fact', async (req, res) => {
+  try {
+    const { claim } = req.body;
+    if (!claim) return res.status(400).json({ error: 'claim required' });
+    const result = await perplexity.searchFact(claim);
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/cognitive/perplexity/docs', async (req, res) => {
+  try {
+    const { technology, question } = req.body;
+    if (!technology || !question) return res.status(400).json({ error: 'technology and question required' });
+    const result = await perplexity.searchDocs(technology, question);
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/cognitive/perplexity/ground', async (req, res) => {
+  try {
+    const { statement, recency } = req.body;
+    if (!statement) return res.status(400).json({ error: 'statement required' });
+    const result = await perplexity.ground(statement, { recency });
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/cognitive/perplexity/answer', async (req, res) => {
+  try {
+    const { question, context } = req.body;
+    if (!question) return res.status(400).json({ error: 'question required' });
+    const result = await perplexity.groundedAnswer(question, context);
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.get('/cognitive/perplexity/status', (req, res) => res.json(perplexity.getStatus()));
+app.get('/cognitive/perplexity/history', (req, res) => res.json(perplexity.getSearchHistory(parseInt(req.query.limit) || 50)));
+app.get('/cognitive/perplexity/stats', (req, res) => res.json(perplexity.getSearchStats()));
+
+// --- MULTI-SOURCE VERIFICATION ---
+app.post('/cognitive/verify', async (req, res) => {
+  try {
+    const { claim, sources, threshold, includeEvidence, requireConsensus } = req.body;
+    if (!claim) return res.status(400).json({ error: 'claim required' });
+    const result = await multiSourceVerify.verify(claim, { sources, threshold, includeEvidence, requireConsensus });
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/cognitive/verify/quick', async (req, res) => {
+  try {
+    const { claim } = req.body;
+    if (!claim) return res.status(400).json({ error: 'claim required' });
+    const result = await multiSourceVerify.quickVerify(claim);
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/cognitive/verify/deep', async (req, res) => {
+  try {
+    const { claim } = req.body;
+    if (!claim) return res.status(400).json({ error: 'claim required' });
+    const result = await multiSourceVerify.deepVerify(claim);
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/cognitive/verify/batch', async (req, res) => {
+  try {
+    const { claims, options } = req.body;
+    if (!claims || !Array.isArray(claims)) return res.status(400).json({ error: 'claims array required' });
+    const result = await multiSourceVerify.verifyBatch(claims, options);
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/cognitive/verify/extract', async (req, res) => {
+  try {
+    const { text, options } = req.body;
+    if (!text) return res.status(400).json({ error: 'text required' });
+    const result = await multiSourceVerify.extractAndVerify(text, options);
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/cognitive/verify/compare', async (req, res) => {
+  try {
+    const { statement1, statement2 } = req.body;
+    if (!statement1 || !statement2) return res.status(400).json({ error: 'statement1 and statement2 required' });
+    const result = await multiSourceVerify.compareStatements(statement1, statement2);
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.get('/cognitive/verify/status', (req, res) => res.json(multiSourceVerify.getStatus()));
+app.get('/cognitive/verify/history', (req, res) => res.json(multiSourceVerify.getVerificationHistory(parseInt(req.query.limit) || 50)));
+app.get('/cognitive/verify/stats', (req, res) => res.json(multiSourceVerify.getVerificationStats()));
+
+// --- CODE SANDBOX ---
+app.post('/cognitive/sandbox/execute', async (req, res) => {
+  try {
+    const { code, language, timeout, validate, verifyOutput, expectedOutput, input } = req.body;
+    if (!code || !language) return res.status(400).json({ error: 'code and language required' });
+    const result = await codeSandbox.execute(code, language, { timeout, validate, verifyOutput, expectedOutput, input });
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/cognitive/sandbox/validate', async (req, res) => {
+  try {
+    const { code, language, checkSecurity, checkSyntax, strictMode } = req.body;
+    if (!code || !language) return res.status(400).json({ error: 'code and language required' });
+    const result = await codeSandbox.validateCode(code, language, { checkSecurity, checkSyntax, strictMode });
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/cognitive/sandbox/run/js', async (req, res) => {
+  try {
+    const { code, options } = req.body;
+    if (!code) return res.status(400).json({ error: 'code required' });
+    const result = await codeSandbox.runJS(code, options);
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/cognitive/sandbox/run/python', async (req, res) => {
+  try {
+    const { code, options } = req.body;
+    if (!code) return res.status(400).json({ error: 'code required' });
+    const result = await codeSandbox.runPython(code, options);
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/cognitive/sandbox/run/bash', async (req, res) => {
+  try {
+    const { code, options } = req.body;
+    if (!code) return res.status(400).json({ error: 'code required' });
+    const result = await codeSandbox.runBash(code, options);
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/cognitive/sandbox/evaluate', async (req, res) => {
+  try {
+    const { expression, language } = req.body;
+    if (!expression) return res.status(400).json({ error: 'expression required' });
+    const result = await codeSandbox.evaluate(expression, language);
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/cognitive/sandbox/generate-run', async (req, res) => {
+  try {
+    const { description, language, options } = req.body;
+    if (!description) return res.status(400).json({ error: 'description required' });
+    const result = await codeSandbox.generateAndRun(description, language, options);
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/cognitive/sandbox/test', async (req, res) => {
+  try {
+    const { code, language, testCases, options } = req.body;
+    if (!code || !language || !testCases) return res.status(400).json({ error: 'code, language, and testCases required' });
+    const result = await codeSandbox.testWithInputs(code, language, testCases, options);
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.get('/cognitive/sandbox/status', (req, res) => res.json(codeSandbox.getStatus()));
+app.get('/cognitive/sandbox/history', (req, res) => res.json(codeSandbox.getExecutionHistory(parseInt(req.query.limit) || 50)));
+app.get('/cognitive/sandbox/stats', (req, res) => res.json(codeSandbox.getExecutionStats()));
+
 // --- COGNITIVE ARCHITECTURE STATUS ---
 app.get('/cognitive/status', (req, res) => {
   res.json({
-    phase: 'Cognitive Architecture Phase 1 + Phase 2',
-    description: 'Core Reasoning Systems + Agent Systems',
+    phase: 'Cognitive Architecture Phase 1 + Phase 2 + Phase 3',
+    description: 'Core Reasoning + Agent Systems + Grounding',
     phase1: {
       name: 'Core Reasoning',
       services: {
@@ -4841,6 +5045,14 @@ app.get('/cognitive/status', (req, res) => {
         toolMaster: toolMaster.getStatus()
       }
     },
+    phase3: {
+      name: 'Grounding Systems',
+      services: {
+        perplexity: perplexity.getStatus(),
+        multiSourceVerify: multiSourceVerify.getStatus(),
+        codeSandbox: codeSandbox.getStatus()
+      }
+    },
     capabilities: [
       'Hierarchical self-managing memory (core/working/archival)',
       'Self-critique and iterative refinement',
@@ -4849,7 +5061,10 @@ app.get('/cognitive/status', (req, res) => {
       'Beam search and self-consistency voting',
       'Multi-agent collaboration (CrewAI)',
       'Smart task routing and delegation',
-      'Dynamic tool selection and chaining'
+      'Dynamic tool selection and chaining',
+      'Real-time web grounding with citations',
+      'Multi-source claim verification',
+      'Secure sandboxed code execution'
     ],
     timestamp: new Date().toISOString()
   });
