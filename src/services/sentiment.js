@@ -57,8 +57,17 @@ Text: "${text.substring(0, 500)}"
 
   try {
     const response = await aiProviders.fastChat(prompt);
-    const responseText = response?.response || response || '';
-    const parsed = JSON.parse(responseText.match?.(/\{[\s\S]*\}/)?.[0] || '{}');
+
+    // Handle AI error response
+    if (response?.error) {
+      console.log('[Sentiment] AI returned error, using rule-based:', response.error);
+      return quickResult;
+    }
+
+    // Extract text from response
+    const responseText = typeof response?.response === 'string' ? response.response : '';
+    const match = responseText.match(/\{[\s\S]*\}/);
+    const parsed = match ? JSON.parse(match[0]) : {};
 
     return {
       text: text.substring(0, 100),
@@ -129,8 +138,16 @@ Possible emotions: joy, sadness, anger, fear, surprise, disgust, trust, anticipa
 
   try {
     const response = await aiProviders.fastChat(prompt);
-    const responseText = response?.response || response || '';
-    const emotions = JSON.parse(responseText.match?.(/\[[\s\S]*\]/)?.[0] || '[]');
+
+    // Handle AI error response
+    if (response?.error) {
+      return { text: text.substring(0, 100), emotions: [], error: response.error };
+    }
+
+    // Extract text from response
+    const responseText = typeof response?.response === 'string' ? response.response : '';
+    const match = responseText.match(/\[[\s\S]*\]/);
+    const emotions = match ? JSON.parse(match[0]) : [];
 
     return {
       text: text.substring(0, 100),
