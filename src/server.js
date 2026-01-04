@@ -58,6 +58,12 @@ import * as metacognition from './services/metacognition.js';
 import * as learning from './services/learning.js';
 import * as scientific from './services/scientific.js';
 import * as explainability from './services/explainability.js';
+
+// Cognitive Architecture Phase 1 - Core Reasoning Systems
+import * as memgpt from './services/memgpt.js';
+import * as reflexion from './services/reflexion.js';
+import * as treeOfThought from './services/tree-of-thought.js';
+
 import {
   usernameToId,
   extractJson,
@@ -4464,6 +4470,203 @@ app.post('/intelligence/explainability/for-audience', async (req, res) => {
 
 app.get('/intelligence/explainability/history', (req, res) => res.json(explainability.getExplanationHistory(parseInt(req.query.limit) || 20)));
 app.get('/intelligence/explainability/status', (req, res) => res.json(explainability.getStatus()));
+
+// ============================================================================
+// COGNITIVE ARCHITECTURE - Phase 1: Core Reasoning Systems
+// ============================================================================
+
+// --- MEMGPT: Hierarchical Self-Managing Memory ---
+app.get('/cognitive/memgpt/status', (req, res) => res.json(memgpt.getStatus()));
+
+app.post('/cognitive/memgpt/core/add', (req, res) => {
+  const { key, value, category } = req.body;
+  res.json(memgpt.addCoreFact(key, value, category));
+});
+
+app.get('/cognitive/memgpt/core/get/:key', (req, res) => {
+  const value = memgpt.getCoreFact(req.params.key);
+  res.json({ key: req.params.key, value });
+});
+
+app.post('/cognitive/memgpt/working/add', (req, res) => {
+  const { content, relevance, metadata } = req.body;
+  res.json(memgpt.addToWorkingMemory(content, relevance || 0.5, metadata));
+});
+
+app.get('/cognitive/memgpt/working', (req, res) => {
+  res.json(memgpt.getWorkingMemory(parseInt(req.query.limit) || 20));
+});
+
+app.post('/cognitive/memgpt/archive', async (req, res) => {
+  try {
+    const { content, metadata } = req.body;
+    const result = await memgpt.archiveToLongTerm(content, metadata);
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/cognitive/memgpt/recall', async (req, res) => {
+  try {
+    const { query, topK } = req.body;
+    const result = await memgpt.recall(query, { topK });
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/cognitive/memgpt/self-manage', async (req, res) => {
+  try {
+    const { context } = req.body;
+    const result = await memgpt.selfManageMemory(context);
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/cognitive/memgpt/build-context', async (req, res) => {
+  try {
+    const { query, maxTokens } = req.body;
+    const context = await memgpt.buildContext(query, maxTokens);
+    res.json({ context, formatted: memgpt.formatContextForPrompt(context) });
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/cognitive/memgpt/message', (req, res) => {
+  const { role, content, metadata } = req.body;
+  res.json(memgpt.addMessage(role, content, metadata));
+});
+
+app.get('/cognitive/memgpt/conversation', (req, res) => {
+  res.json(memgpt.getRecentConversation(parseInt(req.query.limit) || 20));
+});
+
+// --- REFLEXION: Self-Critique and Iterative Improvement ---
+app.get('/cognitive/reflexion/status', (req, res) => res.json(reflexion.getStatus()));
+
+app.post('/cognitive/reflexion/reflect', async (req, res) => {
+  try {
+    const { task, maxAttempts, confidenceThreshold, context } = req.body;
+    const result = await reflexion.reflect(task, { maxAttempts, confidenceThreshold, context });
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/cognitive/reflexion/quick-check', async (req, res) => {
+  try {
+    const { response, originalRequest } = req.body;
+    const result = await reflexion.quickCheck(response, originalRequest);
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/cognitive/reflexion/code', async (req, res) => {
+  try {
+    const { task, language } = req.body;
+    const result = await reflexion.reflectOnCode(task, language || 'javascript');
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/cognitive/reflexion/fact', async (req, res) => {
+  try {
+    const { claim } = req.body;
+    const result = await reflexion.reflectOnFact(claim);
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/cognitive/reflexion/plan', async (req, res) => {
+  try {
+    const { goal, constraints } = req.body;
+    const result = await reflexion.reflectOnPlan(goal, constraints || []);
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/cognitive/reflexion/verify', async (req, res) => {
+  try {
+    const { task } = req.body;
+    const result = await reflexion.chainOfVerification(task);
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.get('/cognitive/reflexion/stats', (req, res) => res.json(reflexion.getReflexionStats()));
+app.get('/cognitive/reflexion/history', (req, res) => res.json(reflexion.getReflexionHistory(parseInt(req.query.limit) || 20)));
+app.get('/cognitive/reflexion/common-issues', (req, res) => res.json(reflexion.getCommonIssues()));
+
+// --- TREE OF THOUGHT: Parallel Reasoning with Backtracking ---
+app.get('/cognitive/tot/status', (req, res) => res.json(treeOfThought.getStatus()));
+
+app.post('/cognitive/tot/explore', async (req, res) => {
+  try {
+    const { problem, breadth, depth, evaluationThreshold, useMultiProvider } = req.body;
+    const result = await treeOfThought.explore(problem, { breadth, depth, evaluationThreshold, useMultiProvider });
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/cognitive/tot/math', async (req, res) => {
+  try {
+    const { problem } = req.body;
+    const result = await treeOfThought.solveMath(problem);
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/cognitive/tot/plan', async (req, res) => {
+  try {
+    const { goal, constraints } = req.body;
+    const result = await treeOfThought.createPlan(goal, constraints || []);
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/cognitive/tot/code', async (req, res) => {
+  try {
+    const { task, language, requirements } = req.body;
+    const result = await treeOfThought.solveCode(task, language || 'javascript', requirements || []);
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/cognitive/tot/beam-search', async (req, res) => {
+  try {
+    const { problem, beamWidth, maxDepth } = req.body;
+    const result = await treeOfThought.beamSearch(problem, { beamWidth, maxDepth });
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/cognitive/tot/self-consistency', async (req, res) => {
+  try {
+    const { problem, samples } = req.body;
+    const result = await treeOfThought.selfConsistency(problem, samples || 5);
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.get('/cognitive/tot/stats', (req, res) => res.json(treeOfThought.getExplorationStats()));
+app.get('/cognitive/tot/history', (req, res) => res.json(treeOfThought.getExplorationHistory(parseInt(req.query.limit) || 20)));
+
+// --- COGNITIVE ARCHITECTURE STATUS ---
+app.get('/cognitive/status', (req, res) => {
+  res.json({
+    phase: 'Cognitive Architecture Phase 1',
+    description: 'Core Reasoning Systems',
+    services: {
+      memgpt: memgpt.getStatus(),
+      reflexion: reflexion.getStatus(),
+      treeOfThought: treeOfThought.getStatus()
+    },
+    capabilities: [
+      'Hierarchical self-managing memory (core/working/archival)',
+      'Self-critique and iterative refinement',
+      'Parallel reasoning with backtracking',
+      'Multi-provider thought generation',
+      'Beam search and self-consistency voting'
+    ],
+    timestamp: new Date().toISOString()
+  });
+});
 
 // --- UNIFIED PHASE 3 STATUS ---
 app.get('/intelligence/v3/status', (req, res) => {
