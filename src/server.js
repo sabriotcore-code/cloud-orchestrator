@@ -4255,6 +4255,14 @@ app.post('/intelligence/probabilistic/uncertainty', (req, res) => {
   } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
+app.post('/intelligence/probabilistic/monte-carlo', (req, res) => {
+  try {
+    const { trials, scenarios } = req.body;
+    const result = probabilistic.monteCarloSimulation(trials, scenarios);
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
 app.get('/intelligence/probabilistic/status', (req, res) => res.json(probabilistic.getStatus()));
 
 // --- METACOGNITION SERVICE ---
@@ -4359,6 +4367,14 @@ app.get('/intelligence/scientific/wikipedia', async (req, res) => {
   try {
     const { query, limit } = req.query;
     const result = await scientific.searchWikipedia(query, parseInt(limit) || 10);
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.get('/intelligence/scientific/semantic-scholar', async (req, res) => {
+  try {
+    const { query, limit } = req.query;
+    const result = await scientific.searchSemanticScholar(query, parseInt(limit) || 10);
     res.json(result);
   } catch (error) { res.status(500).json({ error: error.message }); }
 });
