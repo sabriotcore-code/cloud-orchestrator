@@ -12,6 +12,9 @@
 import * as db from '../db/index.js';
 import * as vectorDb from './vector-db.js';
 import * as aiProviders from './ai-providers.js';
+import fetch from 'node-fetch';
+
+const COHERE_API_KEY = process.env.COHERE_API_KEY;
 
 // ============================================================================
 // QUERY DECOMPOSITION
@@ -134,15 +137,63 @@ async function searchConversations(query, limit = 5) {
 }
 
 // ============================================================================
-// RELEVANCE RE-RANKING
+// RELEVANCE RE-RANKING (Cohere + AI Fallback)
 // ============================================================================
 
 /**
- * Re-rank retrieved results using AI
+ * Re-rank using Cohere Rerank API (fast, purpose-built)
+ */
+async function cohereRerank(query, documents, topN = 5) {
+  const docs = documents.map(d => d.content || d.text || JSON.stringify(d)).slice(0, 100);
+
+  const response = await fetch('https://api.cohere.ai/v1/rerank', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${COHERE_API_KEY}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      model: 'rerank-english-v3.0',
+      query,
+      documents: docs,
+      top_n: topN,
+      return_documents: false
+    })
+  });
+
+  if (!response.ok) {
+    throw new Error(`Cohere API error: ${response.status}`);
+  }
+
+  const data = await response.json();
+
+  // Map back to original documents with Cohere scores
+  return data.results.map(r => ({
+    ...documents[r.index],
+    cohereScore: r.relevance_score,
+    score: r.relevance_score
+  }));
+}
+
+/**
+ * Re-rank retrieved results (Cohere first, AI fallback)
  */
 export async function rerank(query, documents, topN = 5) {
   if (documents.length <= topN) return documents;
 
+  // Try Cohere first (faster, better)
+  if (COHERE_API_KEY) {
+    try {
+      const start = Date.now();
+      const result = await cohereRerank(query, documents, topN);
+      console.log(`[RAG] Cohere rerank: ${Date.now() - start}ms`);
+      return result;
+    } catch (e) {
+      console.log(`[RAG] Cohere failed, falling back to AI: ${e.message}`);
+    }
+  }
+
+  // Fallback to AI-based re-ranking
   const prompt = `Given this query and documents, return the indices of the ${topN} most relevant documents in order of relevance.
 
 Query: "${query}"
