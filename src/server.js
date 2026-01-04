@@ -2249,7 +2249,23 @@ Return JSON:
 
           return { master: { response: executionLog }};
         } catch (e) {
-          return { master: { response: `❌ Failed to execute plan: ${e.message}` }};
+          // =========================================================================
+          // CAUSAL INFERENCE (Item 9) - Analyze root cause of failure
+          // =========================================================================
+          let rootCauseAnalysis = '';
+          try {
+            const causeResult = await causal.analyzeRootCause(e.message, {
+              action: 'execute_plan',
+              task: query.substring(0, 200)
+            });
+            if (causeResult && causeResult.rootCause) {
+              rootCauseAnalysis = `\n\n🔍 *Root Cause Analysis:*\n${causeResult.rootCause}\n` +
+                (causeResult.suggestedFix ? `\n💡 *Suggested Fix:* ${causeResult.suggestedFix}` : '');
+            }
+          } catch (causeErr) {
+            console.log('[Causal] Root cause analysis failed:', causeErr.message);
+          }
+          return { master: { response: `❌ Failed to execute plan: ${e.message}${rootCauseAnalysis}` }};
         }
 
       case 'ASK_AI':
@@ -2333,9 +2349,42 @@ Return JSON:
         const aiResponse = (finalResponse || '').substring(0, 500);
         await memory.store(`last_response_${userId}`, aiResponse, 'context');
 
+        // =========================================================================
+        // REINFORCEMENT LEARNING (Item 8) - Track response for learning
+        // =========================================================================
+        const responseId = `resp_${Date.now()}_${Math.random().toString(36).substring(7)}`;
+        try {
+          await reinforcement.recordResponse({
+            responseId,
+            userId,
+            queryType: complexity.factors.hasCode ? 'code' : complexity.factors.hasAnalysis ? 'analysis' : 'general',
+            modelUsed: responseSource.split(' ')[0],
+            approachUsed: complexity.recommendedApproach,
+            responseLength: (finalResponse || '').length
+          });
+
+          // Record action for anticipation engine (Item 10)
+          await anticipation.recordAction(userId, `ask_${complexity.level}`, enrichedQuestion.substring(0, 200));
+        } catch (e) {
+          console.log('[RL/Anticipation] Failed to record:', e.message);
+        }
+
+        // =========================================================================
+        // ANTICIPATION (Item 10) - Predict next likely action
+        // =========================================================================
+        let suggestionText = '';
+        try {
+          const nextPrediction = await anticipation.predictNextAction(userId, `ask_${complexity.level}`);
+          if (nextPrediction && nextPrediction.confidence > 0.6) {
+            suggestionText = `\n\n💡 _Suggestion: ${nextPrediction.predictedAction}_`;
+          }
+        } catch (e) {
+          // Ignore anticipation errors
+        }
+
         return { master: {
           response: `🤖 *AI Response:*\n${finalResponse}\n\n` +
-            `_Source: ${responseSource} | Complexity: ${complexity.level}_`
+            `_Source: ${responseSource} | Complexity: ${complexity.level}_${suggestionText}`
         }};
 
       case 'REVIEW':
@@ -2927,6 +2976,170 @@ app.get('/intelligence/anomaly/alerts', async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+
+// ============================================================================
+// PROACTIVE MONITORING ENDPOINT (Item 6)
+// ============================================================================
+
+app.post('/intelligence/monitor/check', async (req, res) => {
+  try {
+    const { alertChannel, thresholds = {} } = req.body;
+    const alerts = [];
+
+    // 1. Get system health
+    const health = monitoring.getHealthSummary();
+
+    // 2. Check for critical conditions
+    const memoryUsed = parseFloat(health.memory);
+    if (memoryUsed > (thresholds.memoryPercent || 85)) {
+      alerts.push({ type: 'memory', severity: 'critical', message: `High memory usage: ${health.memory}` });
+    }
+
+    const errorRate = parseFloat(health.errorRate);
+    if (errorRate > (thresholds.errorRatePercent || 5)) {
+      alerts.push({ type: 'errors', severity: 'critical', message: `High error rate: ${health.errorRate}` });
+    }
+
+    // 3. Get recent errors for alerting
+    const recentErrors = monitoring.getRecentErrors(10);
+    const criticalErrors = recentErrors.filter(e =>
+      e.message.includes('FATAL') || e.message.includes('CRITICAL') || e.name === 'FatalError'
+    );
+    if (criticalErrors.length > 0) {
+      alerts.push({
+        type: 'critical_error',
+        severity: 'critical',
+        message: `${criticalErrors.length} critical error(s): ${criticalErrors[0].message.substring(0, 100)}`
+      });
+    }
+
+    // 4. Check for unacknowledged anomaly alerts
+    const anomalyAlerts = await anomaly.getActiveAlerts('critical');
+    if (anomalyAlerts.length > 0) {
+      alerts.push({
+        type: 'anomaly',
+        severity: 'warning',
+        message: `${anomalyAlerts.length} unacknowledged anomaly alert(s)`
+      });
+    }
+
+    // 5. Send to Slack if configured and there are alerts
+    let slackSent = false;
+    if (alertChannel && alerts.length > 0 && slackApp) {
+      try {
+        const alertText = alerts.map(a =>
+          `${a.severity === 'critical' ? '🔴' : '⚠️'} *${a.type.toUpperCase()}*: ${a.message}`
+        ).join('\n');
+
+        await slackApp.client.chat.postMessage({
+          channel: alertChannel,
+          text: `🚨 *Proactive Monitoring Alert*\n\n${alertText}\n\n_Health: ${health.status} | Uptime: ${health.uptime}_`
+        });
+        slackSent = true;
+      } catch (slackErr) {
+        console.error('[Monitor] Slack alert failed:', slackErr.message);
+      }
+    }
+
+    res.json({
+      health,
+      alerts,
+      alertCount: alerts.length,
+      slackSent,
+      checkedAt: new Date().toISOString()
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================================================
+// PROPERTY/RENT ANOMALY DETECTION (Item 7)
+// ============================================================================
+
+app.post('/intelligence/anomaly/property-data', async (req, res) => {
+  try {
+    const { rentValues, occupancyRates, paymentHistory, alertChannel } = req.body;
+    const results = {};
+
+    // Analyze rent values for anomalies
+    if (rentValues && rentValues.length > 0) {
+      results.rent = anomaly.detectAll(rentValues, { methods: ['zscore', 'iqr', 'sudden-change'] });
+    }
+
+    // Analyze occupancy rates
+    if (occupancyRates && occupancyRates.length > 0) {
+      results.occupancy = anomaly.detectAll(occupancyRates, { methods: ['zscore', 'trend-break'] });
+    }
+
+    // Analyze payment patterns
+    if (paymentHistory && paymentHistory.length > 0) {
+      results.payments = anomaly.detectSuddenChanges(paymentHistory, 5, 2);
+    }
+
+    // Count critical anomalies
+    const criticalCount = [
+      results.rent?.confirmedAnomalies?.filter(a => a.severity === 'critical').length || 0,
+      results.occupancy?.confirmedAnomalies?.filter(a => a.severity === 'critical').length || 0,
+      results.payments?.anomalies?.filter(a => a.severity === 'critical').length || 0
+    ].reduce((a, b) => a + b, 0);
+
+    // Alert to Slack if critical anomalies found
+    if (alertChannel && criticalCount > 0 && slackApp) {
+      try {
+        let alertText = `🏠 *Property Data Anomalies Detected*\n\n`;
+        if (results.rent?.confirmedAnomalies?.length > 0) {
+          alertText += `📊 *Rent:* ${results.rent.confirmedAnomalies.length} anomalies\n`;
+        }
+        if (results.occupancy?.confirmedAnomalies?.length > 0) {
+          alertText += `🏢 *Occupancy:* ${results.occupancy.confirmedAnomalies.length} anomalies\n`;
+        }
+        if (results.payments?.anomalies?.length > 0) {
+          alertText += `💰 *Payments:* ${results.payments.anomalies.length} anomalies\n`;
+        }
+
+        await slackApp.client.chat.postMessage({
+          channel: alertChannel,
+          text: alertText
+        });
+      } catch (slackErr) {
+        console.error('[Anomaly] Slack alert failed:', slackErr.message);
+      }
+    }
+
+    res.json({
+      results,
+      summary: {
+        criticalAnomalies: criticalCount,
+        rentAnomalies: results.rent?.confirmedAnomalies?.length || 0,
+        occupancyAnomalies: results.occupancy?.confirmedAnomalies?.length || 0,
+        paymentAnomalies: results.payments?.anomalies?.length || 0
+      },
+      analyzedAt: new Date().toISOString()
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Background monitoring (runs every 5 minutes if MONITOR_INTERVAL is set)
+if (process.env.MONITOR_INTERVAL && process.env.SLACK_ALERT_CHANNEL) {
+  const interval = parseInt(process.env.MONITOR_INTERVAL) || 300000; // 5 min default
+  setInterval(async () => {
+    try {
+      const health = monitoring.getHealthSummary();
+      if (health.status === 'degraded' && slackApp) {
+        await slackApp.client.chat.postMessage({
+          channel: process.env.SLACK_ALERT_CHANNEL,
+          text: `🚨 *System Degraded*\n\nMemory: ${health.memory}\nError Rate: ${health.errorRate}\nUptime: ${health.uptime}`
+        });
+      }
+    } catch (e) {
+      console.error('[Monitor] Background check failed:', e.message);
+    }
+  }, interval);
+  console.log(`[Monitor] Background monitoring enabled (${interval / 1000}s interval)`);
+}
 
 // ============================================================================
 // CAUSAL REASONING ENDPOINTS
