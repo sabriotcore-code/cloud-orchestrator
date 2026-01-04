@@ -64,6 +64,11 @@ import * as memgpt from './services/memgpt.js';
 import * as reflexion from './services/reflexion.js';
 import * as treeOfThought from './services/tree-of-thought.js';
 
+// Cognitive Architecture Phase 2 - Agent Systems
+import * as crewAI from './services/crew-ai.js';
+import * as taskRouter from './services/task-router.js';
+import * as toolMaster from './services/tool-master.js';
+
 import {
   usernameToId,
   extractJson,
@@ -4647,22 +4652,204 @@ app.post('/cognitive/tot/self-consistency', async (req, res) => {
 app.get('/cognitive/tot/stats', (req, res) => res.json(treeOfThought.getExplorationStats()));
 app.get('/cognitive/tot/history', (req, res) => res.json(treeOfThought.getExplorationHistory(parseInt(req.query.limit) || 20)));
 
+// ============================================================================
+// COGNITIVE ARCHITECTURE - Phase 2: Agent Systems
+// ============================================================================
+
+// --- CREWAI: Multi-Agent Collaboration ---
+app.get('/cognitive/crew/status', (req, res) => res.json(crewAI.getStatus()));
+app.get('/cognitive/crew/templates', (req, res) => res.json(crewAI.getAgentTemplates()));
+
+app.post('/cognitive/crew/create', (req, res) => {
+  const { name, agents, tasks, process } = req.body;
+  const crew = crewAI.createCrew({ name, agents, tasks, process });
+  res.json(crew);
+});
+
+app.post('/cognitive/crew/kickoff', async (req, res) => {
+  try {
+    const { crew } = req.body;
+    const result = await crewAI.kickoff(crew);
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/cognitive/crew/research', async (req, res) => {
+  try {
+    const { topic, process } = req.body;
+    const result = await crewAI.researchCrew(topic, { process });
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/cognitive/crew/coding', async (req, res) => {
+  try {
+    const { task, process } = req.body;
+    const result = await crewAI.codingCrew(task, { process });
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/cognitive/crew/planning', async (req, res) => {
+  try {
+    const { goal, process } = req.body;
+    const result = await crewAI.planningCrew(goal, { process });
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/cognitive/crew/analysis', async (req, res) => {
+  try {
+    const { question, data, process } = req.body;
+    const result = await crewAI.analysisCrew(question, data, { process });
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.get('/cognitive/crew/history', (req, res) => res.json(crewAI.getCrewHistory(parseInt(req.query.limit) || 20)));
+app.get('/cognitive/crew/stats', (req, res) => res.json(crewAI.getCrewStats()));
+
+// --- TASK ROUTER: Smart Delegation ---
+app.get('/cognitive/router/status', (req, res) => res.json(taskRouter.getStatus()));
+
+app.post('/cognitive/router/route', async (req, res) => {
+  try {
+    const { task, context, forceHandler } = req.body;
+    const result = await taskRouter.route(task, { context, forceHandler });
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/cognitive/router/quick', (req, res) => {
+  const { task } = req.body;
+  res.json(taskRouter.quickRoute(task));
+});
+
+app.post('/cognitive/router/batch', async (req, res) => {
+  try {
+    const { tasks, parallel } = req.body;
+    const result = await taskRouter.routeBatch(tasks, { parallel });
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/cognitive/router/classify', async (req, res) => {
+  try {
+    const { task } = req.body;
+    const result = await taskRouter.classifyIntent(task);
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/cognitive/router/complexity', async (req, res) => {
+  try {
+    const { task, context } = req.body;
+    const result = await taskRouter.assessComplexity(task, context);
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/cognitive/router/decompose', async (req, res) => {
+  try {
+    const { task, maxSubtasks } = req.body;
+    const result = await taskRouter.decompose(task, { maxSubtasks });
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.get('/cognitive/router/history', (req, res) => res.json(taskRouter.getRoutingHistory(parseInt(req.query.limit) || 50)));
+app.get('/cognitive/router/stats', (req, res) => res.json(taskRouter.getRoutingStats()));
+
+// --- TOOL MASTER: Dynamic Tool Selection ---
+app.get('/cognitive/tools/status', (req, res) => res.json(toolMaster.getStatus()));
+app.get('/cognitive/tools/available', (req, res) => res.json(toolMaster.getAvailableTools()));
+
+app.get('/cognitive/tools/category/:category', (req, res) => {
+  res.json(toolMaster.getToolsByCategory(req.params.category));
+});
+
+app.get('/cognitive/tools/capability/:capability', (req, res) => {
+  res.json(toolMaster.getToolsByCapability(req.params.capability));
+});
+
+app.post('/cognitive/tools/search', (req, res) => {
+  const { query } = req.body;
+  res.json(toolMaster.searchTools(query));
+});
+
+app.post('/cognitive/tools/select', async (req, res) => {
+  try {
+    const { task, maxTools, preferredCategories } = req.body;
+    const result = await toolMaster.selectTools(task, { maxTools, preferredCategories });
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/cognitive/tools/chain', async (req, res) => {
+  try {
+    const { task, options } = req.body;
+    const chain = await toolMaster.createChain(task, options);
+    res.json(chain);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/cognitive/tools/plan', async (req, res) => {
+  try {
+    const { task, tools } = req.body;
+    const result = await toolMaster.planExecution(task, tools);
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/cognitive/tools/execute', async (req, res) => {
+  try {
+    const { task, context } = req.body;
+    const result = await toolMaster.quickExecute(task, { context });
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/cognitive/tools/execute-with', async (req, res) => {
+  try {
+    const { task, tools, context } = req.body;
+    const result = await toolMaster.executeWithTools(task, tools, { context });
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.get('/cognitive/tools/history', (req, res) => res.json(toolMaster.getExecutionHistory(parseInt(req.query.limit) || 50)));
+app.get('/cognitive/tools/stats', (req, res) => res.json(toolMaster.getExecutionStats()));
+
 // --- COGNITIVE ARCHITECTURE STATUS ---
 app.get('/cognitive/status', (req, res) => {
   res.json({
-    phase: 'Cognitive Architecture Phase 1',
-    description: 'Core Reasoning Systems',
-    services: {
-      memgpt: memgpt.getStatus(),
-      reflexion: reflexion.getStatus(),
-      treeOfThought: treeOfThought.getStatus()
+    phase: 'Cognitive Architecture Phase 1 + Phase 2',
+    description: 'Core Reasoning Systems + Agent Systems',
+    phase1: {
+      name: 'Core Reasoning',
+      services: {
+        memgpt: memgpt.getStatus(),
+        reflexion: reflexion.getStatus(),
+        treeOfThought: treeOfThought.getStatus()
+      }
+    },
+    phase2: {
+      name: 'Agent Systems',
+      services: {
+        crewAI: crewAI.getStatus(),
+        taskRouter: taskRouter.getStatus(),
+        toolMaster: toolMaster.getStatus()
+      }
     },
     capabilities: [
       'Hierarchical self-managing memory (core/working/archival)',
       'Self-critique and iterative refinement',
       'Parallel reasoning with backtracking',
       'Multi-provider thought generation',
-      'Beam search and self-consistency voting'
+      'Beam search and self-consistency voting',
+      'Multi-agent collaboration (CrewAI)',
+      'Smart task routing and delegation',
+      'Dynamic tool selection and chaining'
     ],
     timestamp: new Date().toISOString()
   });
