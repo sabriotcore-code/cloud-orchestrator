@@ -1468,6 +1468,43 @@ async function handleMasterCommand(query, userId = 'default') {
   // Get master context summary
   const masterContextSummary = await context.getContextSummary();
 
+  // =========================================================================
+  // RAG + MEM0 CONTEXT RETRIEVAL (Intelligence Enhancement)
+  // =========================================================================
+  let ragContext = '';
+  let mem0Context = '';
+
+  // 1. Enhanced RAG - retrieve relevant knowledge from all sources
+  try {
+    const ragResult = await enhancedRag.enhancedRAG(query, {
+      sources: ['memory', 'conversations'],
+      topK: 5,
+      decompose: true,
+      rerank: true
+    });
+    if (ragResult && ragResult.context) {
+      ragContext = ragResult.context;
+      console.log(`[RAG] Retrieved ${ragResult.results?.length || 0} relevant chunks`);
+    }
+  } catch (e) {
+    console.log('[RAG] Context retrieval failed:', e.message);
+  }
+
+  // 2. Mem0 Long-term Memory - retrieve semantic memories
+  try {
+    const memResult = await mem0.getContext(userId, query, { limit: 5 });
+    if (memResult && (memResult.relevant?.length || memResult.recent?.length)) {
+      const relevantMems = (memResult.relevant || []).map(m => `• ${m.memory || m.text || m}`).join('\n');
+      const recentMems = (memResult.recent || []).map(m => `• ${m.memory || m.text || m}`).join('\n');
+      if (relevantMems) mem0Context += `Related memories:\n${relevantMems}\n`;
+      if (recentMems) mem0Context += `Recent memories:\n${recentMems}`;
+      console.log(`[Mem0] Retrieved ${memResult.relevant?.length || 0} relevant, ${memResult.recent?.length || 0} recent memories`);
+    }
+  } catch (e) {
+    console.log('[Mem0] Memory retrieval failed:', e.message);
+  }
+  // =========================================================================
+
   // Build context about current state
   const stateContext = pendingState.value
     ? `\n⚠️ IMPORTANT: There is a pending ${pendingState.value} awaiting user response.\n`
@@ -2152,6 +2189,16 @@ Return JSON:
         const aiMasterContext = await context.getContextSummary();
         if (aiMasterContext) {
           contextForAI += `=== PROJECT KNOWLEDGE ===\n${aiMasterContext}\n\n`;
+        }
+
+        // Include RAG context (semantic knowledge retrieval)
+        if (ragContext) {
+          contextForAI += `=== RELEVANT KNOWLEDGE (RAG) ===\n${ragContext}\n\n`;
+        }
+
+        // Include Mem0 long-term memory
+        if (mem0Context) {
+          contextForAI += `=== LONG-TERM MEMORY ===\n${mem0Context}\n\n`;
         }
 
         // For project/repo questions, also include real GitHub data
