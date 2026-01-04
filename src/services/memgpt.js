@@ -6,7 +6,7 @@
 import OpenAI from 'openai';
 import Anthropic from '@anthropic-ai/sdk';
 import { pineconeUpsert, pineconeQuery } from './vector-db.js';
-import { cacheSet, cacheGet, cacheDelete } from './vector-db.js';
+import { cacheSet, cacheGet } from './vector-db.js';
 
 // ============================================================================
 // CONFIGURATION
