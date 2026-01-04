@@ -46,6 +46,18 @@ import * as planner from './services/planner.js';
 import * as automl from './services/automl.js';
 import * as monitoring from './services/monitoring.js';
 import * as nlpInterface from './services/nlp-interface.js';
+
+// General Intelligence Systems (Phase 3 - 20 capabilities)
+import * as vision from './services/vision.js';
+import * as audio from './services/audio.js';
+import * as video from './services/video.js';
+import * as documents from './services/documents.js';
+import * as symbolic from './services/symbolic.js';
+import * as probabilistic from './services/probabilistic.js';
+import * as metacognition from './services/metacognition.js';
+import * as learning from './services/learning.js';
+import * as scientific from './services/scientific.js';
+import * as explainability from './services/explainability.js';
 import {
   usernameToId,
   extractJson,
@@ -3983,6 +3995,478 @@ context.loadContext().then(() => {
   console.log('[Startup] Master context loaded');
 }).catch(err => {
   console.log('[Startup] Master context load failed:', err.message);
+});
+
+// ============================================================================
+// PHASE 3: GENERAL INTELLIGENCE - 20 NEW CAPABILITIES
+// ============================================================================
+
+// --- VISION SERVICE ---
+app.post('/intelligence/vision/analyze-image', async (req, res) => {
+  try {
+    const { imageUrl, prompt, provider } = req.body;
+    let result;
+    switch (provider) {
+      case 'claude': result = await vision.analyzeWithClaude(imageUrl, prompt); break;
+      case 'gemini': result = await vision.analyzeWithGemini(imageUrl, prompt); break;
+      default: result = await vision.analyzeWithGPT4V(imageUrl, prompt);
+    }
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/intelligence/vision/multi', async (req, res) => {
+  try {
+    const { imageUrl, prompt, providers } = req.body;
+    const result = await vision.analyzeMultiProvider(imageUrl, prompt, providers);
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/intelligence/vision/extract-text', async (req, res) => {
+  try {
+    const { imageUrl } = req.body;
+    const result = await vision.extractText(imageUrl);
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/intelligence/vision/compare', async (req, res) => {
+  try {
+    const { imageUrl1, imageUrl2, aspect } = req.body;
+    const result = await vision.compareImages(imageUrl1, imageUrl2, aspect);
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.get('/intelligence/vision/status', (req, res) => res.json(vision.getStatus()));
+
+// --- AUDIO SERVICE ---
+app.post('/intelligence/audio/transcribe', async (req, res) => {
+  try {
+    const { audioPath, language, timestamps } = req.body;
+    const result = await audio.transcribe(audioPath, { language, timestamps });
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/intelligence/audio/translate', async (req, res) => {
+  try {
+    const { audioPath } = req.body;
+    const result = await audio.translateToEnglish(audioPath);
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/intelligence/audio/analyze', async (req, res) => {
+  try {
+    const { audioPath, analysisType } = req.body;
+    const result = await audio.analyzeAudio(audioPath, analysisType);
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/intelligence/audio/meeting-notes', async (req, res) => {
+  try {
+    const { audioPath } = req.body;
+    const result = await audio.generateMeetingNotes(audioPath);
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.get('/intelligence/audio/status', (req, res) => res.json(audio.getStatus()));
+
+// --- VIDEO SERVICE ---
+app.post('/intelligence/video/analyze', async (req, res) => {
+  try {
+    const { videoUrl, prompt } = req.body;
+    const result = await video.analyzeVideo(videoUrl, prompt);
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/intelligence/video/summarize', async (req, res) => {
+  try {
+    const { videoUrl, length } = req.body;
+    const result = await video.summarizeVideo(videoUrl, length);
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/intelligence/video/transcript', async (req, res) => {
+  try {
+    const { videoUrl } = req.body;
+    const result = await video.generateTranscript(videoUrl);
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/intelligence/video/search', async (req, res) => {
+  try {
+    const { videoUrl, query } = req.body;
+    const result = await video.searchInVideo(videoUrl, query);
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.get('/intelligence/video/status', (req, res) => res.json(video.getStatus()));
+
+// --- DOCUMENT SERVICE ---
+app.post('/intelligence/documents/parse', async (req, res) => {
+  try {
+    const { pdfSource, prompt } = req.body;
+    const result = await documents.parsePDF(pdfSource, prompt);
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/intelligence/documents/extract', async (req, res) => {
+  try {
+    const { pdfSource, schema } = req.body;
+    const result = await documents.extractStructuredData(pdfSource, schema);
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/intelligence/documents/analyze-contract', async (req, res) => {
+  try {
+    const { pdfSource } = req.body;
+    const result = await documents.analyzeContract(pdfSource);
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/intelligence/documents/analyze-financial', async (req, res) => {
+  try {
+    const { pdfSource } = req.body;
+    const result = await documents.analyzeFinancial(pdfSource);
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/intelligence/documents/compare', async (req, res) => {
+  try {
+    const { doc1Source, doc2Source } = req.body;
+    const result = await documents.compareDocuments(doc1Source, doc2Source);
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/intelligence/documents/ask', async (req, res) => {
+  try {
+    const { pdfSource, question } = req.body;
+    const result = await documents.askDocument(pdfSource, question);
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.get('/intelligence/documents/status', (req, res) => res.json(documents.getStatus()));
+
+// --- SYMBOLIC REASONING SERVICE ---
+app.post('/intelligence/symbolic/evaluate', (req, res) => {
+  try {
+    const { expression, variables } = req.body;
+    const result = symbolic.evaluateLogic(expression, variables);
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/intelligence/symbolic/truth-table', (req, res) => {
+  try {
+    const { expression, variables } = req.body;
+    const result = symbolic.truthTable(expression, variables);
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/intelligence/symbolic/assert-fact', (req, res) => {
+  try {
+    const { fact } = req.body;
+    const result = symbolic.assertFact(fact);
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/intelligence/symbolic/query', (req, res) => {
+  try {
+    const { query } = req.body;
+    const result = symbolic.query(query);
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/intelligence/symbolic/prove', async (req, res) => {
+  try {
+    const { theorem, axioms } = req.body;
+    const result = await symbolic.proveTheorem(theorem, axioms);
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/intelligence/symbolic/analogy', async (req, res) => {
+  try {
+    const { a, b, c } = req.body;
+    const result = await symbolic.completeAnalogy(a, b, c);
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.get('/intelligence/symbolic/kb-stats', (req, res) => res.json(symbolic.getKnowledgeBaseStats()));
+app.get('/intelligence/symbolic/status', (req, res) => res.json(symbolic.getStatus()));
+
+// --- PROBABILISTIC REASONING SERVICE ---
+app.post('/intelligence/probabilistic/bayes', (req, res) => {
+  try {
+    const { priorA, likelihoodBgivenA, priorB } = req.body;
+    const result = probabilistic.bayesTheorem(priorA, likelihoodBgivenA, priorB);
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/intelligence/probabilistic/bayes-complement', (req, res) => {
+  try {
+    const { priorA, truePositiveRate, falsePositiveRate } = req.body;
+    const result = probabilistic.bayesWithComplement(priorA, truePositiveRate, falsePositiveRate);
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/intelligence/probabilistic/counterfactual', async (req, res) => {
+  try {
+    const { factual, counterfactual, context } = req.body;
+    const result = await probabilistic.analyzeCounterfactual(factual, counterfactual, context);
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/intelligence/probabilistic/expected-value', (req, res) => {
+  try {
+    const { options } = req.body;
+    const result = probabilistic.expectedValueAnalysis(options);
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/intelligence/probabilistic/uncertainty', (req, res) => {
+  try {
+    const { samples } = req.body;
+    const result = probabilistic.quantifyUncertainty(samples);
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.get('/intelligence/probabilistic/status', (req, res) => res.json(probabilistic.getStatus()));
+
+// --- METACOGNITION SERVICE ---
+app.post('/intelligence/metacognition/assess-confidence', async (req, res) => {
+  try {
+    const { question, answer, reasoning } = req.body;
+    const result = await metacognition.assessConfidence(question, answer, reasoning);
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/intelligence/metacognition/reflect', async (req, res) => {
+  try {
+    const { problem, steps, conclusion } = req.body;
+    const result = await metacognition.reflectOnReasoning(problem, steps, conclusion);
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/intelligence/metacognition/detect-biases', async (req, res) => {
+  try {
+    const { reasoning } = req.body;
+    const result = await metacognition.detectBiases(reasoning);
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/intelligence/metacognition/decompose-goal', async (req, res) => {
+  try {
+    const { goal, context } = req.body;
+    const result = await metacognition.decomposeGoal(goal, context);
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.get('/intelligence/metacognition/cognitive-load', (req, res) => res.json(metacognition.trackCognitiveLoad()));
+app.get('/intelligence/metacognition/state', (req, res) => res.json(metacognition.getCognitiveState()));
+app.get('/intelligence/metacognition/status', (req, res) => res.json(metacognition.getStatus()));
+
+// --- LEARNING SERVICE ---
+app.post('/intelligence/learning/analyze-task', async (req, res) => {
+  try {
+    const { task, examples } = req.body;
+    const result = await learning.analyzeTaskForLearning(task, examples);
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/intelligence/learning/store-knowledge', async (req, res) => {
+  try {
+    const { category, knowledge, metadata } = req.body;
+    const result = await learning.storeKnowledge(category, knowledge, metadata);
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.get('/intelligence/learning/retrieve/:category', async (req, res) => {
+  try {
+    const result = await learning.retrieveKnowledge(req.params.category, req.query.query);
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/intelligence/learning/transfer', async (req, res) => {
+  try {
+    const { sourceDomain, targetDomain, context } = req.body;
+    const result = await learning.transferKnowledge(sourceDomain, targetDomain, context);
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/intelligence/learning/feedback', async (req, res) => {
+  try {
+    const { responseId, feedback, context } = req.body;
+    const result = await learning.recordFeedback(responseId, feedback, context);
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.get('/intelligence/learning/preferences/:userId', (req, res) => res.json(learning.getUserPreferences(req.params.userId)));
+app.get('/intelligence/learning/state', (req, res) => res.json(learning.getLearningState()));
+app.get('/intelligence/learning/status', (req, res) => res.json(learning.getStatus()));
+
+// --- SCIENTIFIC SERVICE ---
+app.get('/intelligence/scientific/arxiv', async (req, res) => {
+  try {
+    const { query, maxResults, sortBy } = req.query;
+    const result = await scientific.searchArxiv(query, parseInt(maxResults) || 10, sortBy);
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.get('/intelligence/scientific/pubmed', async (req, res) => {
+  try {
+    const { query, maxResults } = req.query;
+    const result = await scientific.searchPubmed(query, parseInt(maxResults) || 10);
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.get('/intelligence/scientific/wikipedia', async (req, res) => {
+  try {
+    const { query, limit } = req.query;
+    const result = await scientific.searchWikipedia(query, parseInt(limit) || 10);
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/intelligence/scientific/multi-search', async (req, res) => {
+  try {
+    const { query, sources } = req.body;
+    const result = await scientific.multiSourceSearch(query, sources);
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/intelligence/scientific/synthesize', async (req, res) => {
+  try {
+    const { query, maxPapers } = req.body;
+    const result = await scientific.synthesizeResearch(query, maxPapers);
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/intelligence/scientific/fact-check', async (req, res) => {
+  try {
+    const { claim } = req.body;
+    const result = await scientific.factCheck(claim);
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.get('/intelligence/scientific/status', (req, res) => res.json(scientific.getStatus()));
+
+// --- EXPLAINABILITY SERVICE ---
+app.post('/intelligence/explainability/explain', async (req, res) => {
+  try {
+    const { question, answer, context } = req.body;
+    const result = await explainability.explainReasoning(question, answer, context);
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/intelligence/explainability/chain-of-thought', async (req, res) => {
+  try {
+    const { problem } = req.body;
+    const result = await explainability.chainOfThought(problem);
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/intelligence/explainability/feature-importance', async (req, res) => {
+  try {
+    const { features, decision } = req.body;
+    const result = await explainability.analyzeFeatureImportance(features, decision);
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/intelligence/explainability/counterfactual', async (req, res) => {
+  try {
+    const { features, currentOutcome, desiredOutcome } = req.body;
+    const result = await explainability.generateCounterfactual(features, currentOutcome, desiredOutcome);
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/intelligence/explainability/what-if', async (req, res) => {
+  try {
+    const { scenario, modifications } = req.body;
+    const result = await explainability.whatIfAnalysis(scenario, modifications);
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/intelligence/explainability/audit', async (req, res) => {
+  try {
+    const { decision, factors, stakeholders } = req.body;
+    const result = await explainability.createDecisionAudit(decision, factors, stakeholders);
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/intelligence/explainability/for-audience', async (req, res) => {
+  try {
+    const { decision, reasoning, audience } = req.body;
+    const result = await explainability.explainForAudience(decision, reasoning, audience);
+    res.json(result);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.get('/intelligence/explainability/history', (req, res) => res.json(explainability.getExplanationHistory(parseInt(req.query.limit) || 20)));
+app.get('/intelligence/explainability/status', (req, res) => res.json(explainability.getStatus()));
+
+// --- UNIFIED PHASE 3 STATUS ---
+app.get('/intelligence/v3/status', (req, res) => {
+  res.json({
+    phase: 'Phase 3: General Intelligence - 20 Capabilities',
+    services: {
+      vision: vision.getStatus(),
+      audio: audio.getStatus(),
+      video: video.getStatus(),
+      documents: documents.getStatus(),
+      symbolic: symbolic.getStatus(),
+      probabilistic: probabilistic.getStatus(),
+      metacognition: metacognition.getStatus(),
+      learning: learning.getStatus(),
+      scientific: scientific.getStatus(),
+      explainability: explainability.getStatus()
+    },
+    timestamp: new Date().toISOString()
+  });
 });
 
 // Pre-warm AI providers on startup (run in parallel for speed)
