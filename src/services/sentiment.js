@@ -57,7 +57,8 @@ Text: "${text.substring(0, 500)}"
 
   try {
     const response = await aiProviders.fastChat(prompt);
-    const parsed = JSON.parse(response.response.match(/\{[\s\S]*\}/)?.[0] || '{}');
+    const responseText = response?.response || response || '';
+    const parsed = JSON.parse(responseText.match?.(/\{[\s\S]*\}/)?.[0] || '{}');
 
     return {
       text: text.substring(0, 100),
@@ -65,6 +66,7 @@ Text: "${text.substring(0, 500)}"
       method: 'ai'
     };
   } catch (e) {
+    console.error('[Sentiment] AI analysis failed:', e.message);
     return quickResult; // Fallback to rule-based
   }
 }
@@ -127,7 +129,8 @@ Possible emotions: joy, sadness, anger, fear, surprise, disgust, trust, anticipa
 
   try {
     const response = await aiProviders.fastChat(prompt);
-    const emotions = JSON.parse(response.response.match(/\[[\s\S]*\]/)?.[0] || '[]');
+    const responseText = response?.response || response || '';
+    const emotions = JSON.parse(responseText.match?.(/\[[\s\S]*\]/)?.[0] || '[]');
 
     return {
       text: text.substring(0, 100),
@@ -135,6 +138,7 @@ Possible emotions: joy, sadness, anger, fear, surprise, disgust, trust, anticipa
       dominantEmotion: emotions.sort((a, b) => b.intensity - a.intensity)[0] || null
     };
   } catch (e) {
+    console.error('[Sentiment] Emotion detection failed:', e.message);
     return {
       text: text.substring(0, 100),
       emotions: [],
