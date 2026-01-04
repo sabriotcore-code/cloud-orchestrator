@@ -34,6 +34,18 @@ import * as contextMemory from './services/context-memory.js';
 import * as reasoning from './services/reasoning.js';
 import * as anticipation from './services/anticipation.js';
 import * as reinforcement from './services/reinforcement.js';
+
+// Advanced Intelligence Systems (Phase 2)
+import * as enhancedRag from './services/enhanced-rag.js';
+import * as multimodal from './services/multimodal.js';
+import * as codegen from './services/codegen.js';
+import * as sentimentAnalysis from './services/sentiment.js';
+import * as anomaly from './services/anomaly.js';
+import * as causal from './services/causal.js';
+import * as planner from './services/planner.js';
+import * as automl from './services/automl.js';
+import * as monitoring from './services/monitoring.js';
+import * as nlpInterface from './services/nlp-interface.js';
 import {
   usernameToId,
   extractJson,
@@ -2523,10 +2535,542 @@ app.get('/intelligence/status', async (req, res) => {
         contextMemory: 'ready',
         reasoning: 'ready',
         anticipation: 'ready',
-        reinforcement: improvementScore
+        reinforcement: improvementScore,
+        enhancedRag: 'ready',
+        multimodal: 'ready',
+        codegen: 'ready',
+        sentiment: 'ready',
+        anomaly: 'ready',
+        causal: 'ready',
+        planner: 'ready',
+        automl: 'ready',
+        monitoring: 'ready',
+        nlpInterface: 'ready'
       },
       timestamp: new Date().toISOString()
     });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================================================
+// ENHANCED RAG ENDPOINTS
+// ============================================================================
+
+app.post('/intelligence/rag/query', async (req, res) => {
+  try {
+    const { query, options } = req.body;
+    const result = await enhancedRag.ragQuery(query, options);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/intelligence/rag/decompose', async (req, res) => {
+  try {
+    const { query } = req.body;
+    const result = await enhancedRag.decomposeQuery(query);
+    res.json({ query, subQueries: result });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================================================
+// MULTIMODAL + PREDICTIVE ANALYTICS ENDPOINTS
+// ============================================================================
+
+app.post('/intelligence/vision/analyze', async (req, res) => {
+  try {
+    const { imageUrl, prompt } = req.body;
+    const result = await multimodal.analyzeImage(imageUrl, prompt);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/intelligence/vision/ocr', async (req, res) => {
+  try {
+    const { imageUrl } = req.body;
+    const result = await multimodal.extractText(imageUrl);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/intelligence/forecast', async (req, res) => {
+  try {
+    const { data, options } = req.body;
+    const result = await multimodal.forecast(data, options);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/intelligence/predict/capacity', async (req, res) => {
+  try {
+    const { data, options } = req.body;
+    const result = await multimodal.predictCapacity(data, options);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================================================
+// CODE GENERATION ENDPOINTS
+// ============================================================================
+
+app.post('/intelligence/codegen/generate', async (req, res) => {
+  try {
+    const { description, options } = req.body;
+    const result = await codegen.generateCode(description, options);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/intelligence/codegen/review', async (req, res) => {
+  try {
+    const { code, options } = req.body;
+    const result = await codegen.reviewCode(code, options);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/intelligence/codegen/fix', async (req, res) => {
+  try {
+    const { code, errorMessage } = req.body;
+    const result = await codegen.fixCode(code, errorMessage);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/intelligence/codegen/tests', async (req, res) => {
+  try {
+    const { code, options } = req.body;
+    const result = await codegen.generateTests(code, options);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/intelligence/codegen/execute', async (req, res) => {
+  try {
+    const { description, options } = req.body;
+    const result = await codegen.selfHealingExecute(description, options);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================================================
+// SENTIMENT ANALYSIS ENDPOINTS
+// ============================================================================
+
+app.post('/intelligence/sentiment/analyze', async (req, res) => {
+  try {
+    const { text } = req.body;
+    const result = await sentimentAnalysis.analyzeSentiment(text);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/intelligence/sentiment/emotions', async (req, res) => {
+  try {
+    const { text } = req.body;
+    const result = await sentimentAnalysis.detectEmotions(text);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/intelligence/sentiment/track', async (req, res) => {
+  try {
+    const { userId, text, context } = req.body;
+    const result = await sentimentAnalysis.trackMood(userId, text, context);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/intelligence/sentiment/trend/:userId', async (req, res) => {
+  try {
+    const { hours } = req.query;
+    const result = await sentimentAnalysis.getMoodTrend(req.params.userId, parseInt(hours) || 24);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/intelligence/sentiment/style/:userId', async (req, res) => {
+  try {
+    const result = await sentimentAnalysis.getResponseStyle(req.params.userId);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================================================
+// ANOMALY DETECTION ENDPOINTS
+// ============================================================================
+
+app.post('/intelligence/anomaly/detect', async (req, res) => {
+  try {
+    const { data, options } = req.body;
+    const result = anomaly.detectAll(data, options);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/intelligence/anomaly/zscore', async (req, res) => {
+  try {
+    const { data, threshold } = req.body;
+    const result = anomaly.detectZScore(data, threshold);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/intelligence/anomaly/sudden-change', async (req, res) => {
+  try {
+    const { data, windowSize, threshold } = req.body;
+    const result = anomaly.detectSuddenChanges(data, windowSize, threshold);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/intelligence/anomaly/alerts', async (req, res) => {
+  try {
+    const { severity } = req.query;
+    const result = await anomaly.getActiveAlerts(severity);
+    res.json({ alerts: result });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================================================
+// CAUSAL REASONING ENDPOINTS
+// ============================================================================
+
+app.post('/intelligence/causal/graph', async (req, res) => {
+  try {
+    const { events, options } = req.body;
+    const result = await causal.buildCausalGraph(events, options);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/intelligence/causal/root-cause', async (req, res) => {
+  try {
+    const { effect, events, options } = req.body;
+    const result = await causal.findRootCauses(effect, events, options);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/intelligence/causal/analyze', async (req, res) => {
+  try {
+    const { symptom, context } = req.body;
+    const result = await causal.analyzeRootCause(symptom, context);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/intelligence/causal/impact', async (req, res) => {
+  try {
+    const { cause, events, options } = req.body;
+    const result = await causal.predictImpact(cause, events, options);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================================================
+// HIERARCHICAL TASK PLANNER ENDPOINTS
+// ============================================================================
+
+app.post('/intelligence/planner/decompose', async (req, res) => {
+  try {
+    const { goal, options } = req.body;
+    const result = await planner.decomposeGoal(goal, options);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/intelligence/planner/plan', async (req, res) => {
+  try {
+    const { goal, options } = req.body;
+    const result = await planner.createExecutionPlan(goal, options);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/intelligence/planner/save', async (req, res) => {
+  try {
+    const { plan } = req.body;
+    const result = await planner.savePlan(plan);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/intelligence/planner/progress', async (req, res) => {
+  try {
+    const { planId, taskId, status, notes } = req.body;
+    const result = await planner.updateProgress(planId, taskId, status, notes);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/intelligence/planner/status/:planId', async (req, res) => {
+  try {
+    const result = await planner.getPlanStatus(req.params.planId);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/intelligence/planner/active', async (req, res) => {
+  try {
+    const result = await planner.listActivePlans();
+    res.json({ plans: result });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================================================
+// AUTOML OPTIMIZER ENDPOINTS
+// ============================================================================
+
+app.post('/intelligence/automl/benchmark', async (req, res) => {
+  try {
+    const { prompt, options } = req.body;
+    const result = await automl.benchmarkModels(prompt, options);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/intelligence/automl/optimize-prompt', async (req, res) => {
+  try {
+    const { prompt, options } = req.body;
+    const result = await automl.optimizePrompt(prompt, options);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/intelligence/automl/fallback', async (req, res) => {
+  try {
+    const { prompt, options } = req.body;
+    const result = await automl.executeWithFallback(prompt, options);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/intelligence/automl/experiment', async (req, res) => {
+  try {
+    const { name, variants } = req.body;
+    const result = await automl.createExperiment(name, variants);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/intelligence/automl/experiment/:experimentId', async (req, res) => {
+  try {
+    const result = await automl.getExperimentResults(req.params.experimentId);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/intelligence/automl/cost-optimize', async (req, res) => {
+  try {
+    const { taskType, options } = req.body;
+    const result = await automl.optimizeCostPerformance(taskType, options);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================================================
+// SYSTEM MONITORING ENDPOINTS
+// ============================================================================
+
+app.get('/intelligence/monitoring/health', async (req, res) => {
+  try {
+    const result = monitoring.getHealthSummary();
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/intelligence/monitoring/metrics', async (req, res) => {
+  try {
+    const result = monitoring.getAllMetrics();
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/intelligence/monitoring/errors', async (req, res) => {
+  try {
+    const { limit } = req.query;
+    const result = monitoring.getRecentErrors(parseInt(limit) || 20);
+    res.json({ errors: result, stats: monitoring.getErrorStats() });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/intelligence/monitoring/sla', async (req, res) => {
+  try {
+    const { threshold } = req.query;
+    const result = monitoring.getSLAReport({ latencyThreshold: parseInt(threshold) || 1000 });
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/intelligence/monitoring/resources', async (req, res) => {
+  try {
+    const result = monitoring.getResourceUsage();
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/intelligence/monitoring/traces', async (req, res) => {
+  try {
+    const { limit } = req.query;
+    const result = await monitoring.getTraceHistory(parseInt(limit) || 50);
+    res.json({ traces: result });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================================================
+// NLP INTERFACE ENDPOINTS
+// ============================================================================
+
+app.post('/intelligence/nlp/parse', async (req, res) => {
+  try {
+    const { text, userId } = req.body;
+    const result = await nlpInterface.parseCommand(text, userId || 'default');
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/intelligence/nlp/intent', async (req, res) => {
+  try {
+    const { text, options } = req.body;
+    const result = await nlpInterface.classifyIntent(text, options);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/intelligence/nlp/entities', async (req, res) => {
+  try {
+    const { text, entityTypes } = req.body;
+    const result = await nlpInterface.extractEntitiesAI(text, entityTypes);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/intelligence/nlp/dialog/start', async (req, res) => {
+  try {
+    const { userId, template, initialSlots } = req.body;
+    const result = nlpInterface.startDialog(userId, template, initialSlots);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/intelligence/nlp/dialog/continue', async (req, res) => {
+  try {
+    const { dialogId, input } = req.body;
+    const result = nlpInterface.continueDialog(dialogId, input);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/intelligence/nlp/dialog/complete', async (req, res) => {
+  try {
+    const { dialogId } = req.body;
+    const result = nlpInterface.completeDialog(dialogId);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/intelligence/nlp/context/:userId', async (req, res) => {
+  try {
+    const result = nlpInterface.getUserContext(req.params.userId);
+    res.json(result);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
