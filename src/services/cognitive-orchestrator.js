@@ -611,12 +611,344 @@ async function initializePlugins() {
       module: explainability
     });
 
+    // =========================================
+    // NEW INTELLIGENCE SERVICES (100 Tools Expansion)
+    // =========================================
+
+    // Extended AI Providers
+    const aiProvidersExt = await import('./ai-providers-extended.js');
+    registerPlugin('ai-providers-extended', {
+      category: 'reasoning',
+      capabilities: ['multi_model', 'groq', 'mistral', 'cohere', 'together', 'deepseek', 'consensus'],
+      intents: [
+        /\b(groq|mistral|cohere|together|deepseek|fireworks|openrouter)\b/i,
+        /\b(consensus|multi-model|compare models)\b/i
+      ],
+      priority: 75,
+      handler: async (input, ctx) => {
+        if (/consensus/i.test(input)) {
+          return aiProvidersExt.multiModelConsensus(input);
+        }
+        return aiProvidersExt.askGroq(input);
+      },
+      module: aiProvidersExt
+    });
+
+    // Knowledge Systems
+    const knowledge = await import('./knowledge-systems.js');
+    registerPlugin('knowledge-systems', {
+      category: 'grounding',
+      capabilities: ['wikipedia', 'wolfram', 'arxiv', 'news', 'stackoverflow', 'academic'],
+      intents: [
+        /\b(wikipedia|wiki|wolfram|arxiv|academic|paper|research)\b/i,
+        /\b(stack overflow|stackoverflow|programming question)\b/i,
+        /\b(news|headlines|current events)\b/i,
+        /\b(calculate|compute|math|equation)\b/i
+      ],
+      priority: 72,
+      handler: async (input, ctx) => {
+        if (/wiki/i.test(input)) {
+          const topic = input.replace(/.*wiki\w*\s+/i, '').trim();
+          return knowledge.wikiSummary(topic);
+        }
+        if (/wolfram|calculate|compute/i.test(input)) {
+          return knowledge.wolframShort(input);
+        }
+        if (/arxiv|paper|academic/i.test(input)) {
+          return knowledge.arxivSearch(input);
+        }
+        if (/news|headline/i.test(input)) {
+          return knowledge.newsSearch(input);
+        }
+        return knowledge.queryKnowledge(input);
+      },
+      module: knowledge
+    });
+
+    // Advanced Reasoning
+    const advReasoning = await import('./advanced-reasoning.js');
+    registerPlugin('advanced-reasoning', {
+      category: 'reasoning',
+      capabilities: ['logic', 'math', 'probability', 'bayesian', 'game_theory', 'optimization'],
+      intents: [
+        /\b(prove|proof|logic|valid|fallacy)\b/i,
+        /\b(probability|bayesian|likelihood|odds)\b/i,
+        /\b(solve|equation|calculate|math)\b/i,
+        /\b(optimize|maximize|minimize|constraint)\b/i,
+        /\b(game theory|strategy|nash|equilibrium)\b/i
+      ],
+      priority: 68,
+      handler: async (input, ctx) => {
+        if (/proof|prove|logic|fallacy/i.test(input)) {
+          return advReasoning.analyzeLogic(input);
+        }
+        if (/probability|bayesian|odds/i.test(input)) {
+          return advReasoning.bayesianInference(input, []);
+        }
+        if (/optimize|constraint|maximize|minimize/i.test(input)) {
+          return advReasoning.optimizeWithConstraints(input, [], []);
+        }
+        if (/game theory|strategy/i.test(input)) {
+          return advReasoning.gameTheoryAnalysis(input, []);
+        }
+        return advReasoning.solveMath(input);
+      },
+      module: advReasoning
+    });
+
+    // Language Understanding
+    const langUnderstanding = await import('./language-understanding.js');
+    registerPlugin('language-understanding', {
+      category: 'analysis',
+      capabilities: ['entities', 'sentiment', 'summarize', 'translate', 'classify', 'qa'],
+      intents: [
+        /\b(extract|entities|ner|names|organizations)\b/i,
+        /\b(sentiment|emotion|feeling|tone)\b/i,
+        /\b(summarize|summary|tldr|key points)\b/i,
+        /\b(translate|translation|spanish|french|german|chinese)\b/i,
+        /\b(classify|categorize|what type)\b/i
+      ],
+      priority: 65,
+      handler: async (input, ctx) => {
+        if (/extract.*entit|ner|names.*text/i.test(input)) {
+          return langUnderstanding.extractEntities(ctx.text || input);
+        }
+        if (/sentiment|emotion|feeling/i.test(input)) {
+          return langUnderstanding.analyzeSentiment(ctx.text || input);
+        }
+        if (/summarize|summary|tldr/i.test(input)) {
+          return langUnderstanding.summarize(ctx.text || input);
+        }
+        if (/translate/i.test(input)) {
+          const lang = input.match(/to (\w+)/)?.[1] || 'Spanish';
+          return langUnderstanding.translate(ctx.text || input, lang);
+        }
+        return langUnderstanding.detectIntent(input);
+      },
+      module: langUnderstanding
+    });
+
+    // Data Analysis
+    const dataAnalysis = await import('./data-analysis.js');
+    registerPlugin('data-analysis', {
+      category: 'analysis',
+      capabilities: ['statistics', 'correlation', 'regression', 'timeseries', 'clustering', 'patterns'],
+      intents: [
+        /\b(statistics|stats|mean|median|std|variance)\b/i,
+        /\b(correlation|correlate|relationship)\b/i,
+        /\b(regression|predict|forecast|trend)\b/i,
+        /\b(cluster|group|segment|pattern)\b/i,
+        /\b(time series|seasonal|moving average)\b/i,
+        /\b(outlier|anomaly|unusual data)\b/i
+      ],
+      priority: 62,
+      handler: async (input, ctx) => {
+        const data = ctx.data || [];
+        if (/correlation/i.test(input)) {
+          return dataAnalysis.calculateCorrelation(data.x || [], data.y || []);
+        }
+        if (/regression|predict/i.test(input)) {
+          return dataAnalysis.linearRegression(data.x || [], data.y || []);
+        }
+        if (/cluster|segment/i.test(input)) {
+          return dataAnalysis.kMeansClustering(data, 3);
+        }
+        if (/trend|time series/i.test(input)) {
+          return dataAnalysis.detectTrend(data);
+        }
+        if (/pattern/i.test(input)) {
+          return dataAnalysis.detectPatterns(data, input);
+        }
+        return dataAnalysis.calculateStats(data);
+      },
+      module: dataAnalysis
+    });
+
+    // Code Intelligence
+    const codeIntel = await import('./code-intelligence.js');
+    registerPlugin('code-intelligence', {
+      category: 'analysis',
+      capabilities: ['code_analysis', 'bug_detection', 'test_generation', 'code_review', 'refactoring'],
+      intents: [
+        /\b(analyze|review)\s+(this\s+)?(code|function|class)\b/i,
+        /\b(find|detect)\s+(bugs?|issues?|problems?)\b/i,
+        /\b(generate|create|write)\s+tests?\b/i,
+        /\b(refactor|improve|optimize)\s+(this\s+)?(code)\b/i,
+        /\b(code smell|complexity|quality)\b/i,
+        /\b(explain|document)\s+(this\s+)?(code|function)\b/i
+      ],
+      priority: 66,
+      handler: async (input, ctx) => {
+        const code = ctx.code || extractCode(input);
+        const lang = ctx.language || 'javascript';
+
+        if (/bugs?|issues?|problems?/i.test(input)) {
+          return codeIntel.detectBugs(code, lang);
+        }
+        if (/tests?|test case/i.test(input)) {
+          return codeIntel.generateTests(code, lang);
+        }
+        if (/review/i.test(input)) {
+          return codeIntel.reviewCode(code, lang);
+        }
+        if (/refactor|improve/i.test(input)) {
+          return codeIntel.suggestRefactoring(code, lang);
+        }
+        if (/explain|document/i.test(input)) {
+          return codeIntel.explainCode(code, lang);
+        }
+        if (/complexity/i.test(input)) {
+          return codeIntel.calculateComplexity(code, lang);
+        }
+        return codeIntel.analyzeCode(code, lang);
+      },
+      module: codeIntel
+    });
+
+    // Self-Improvement
+    const selfImprove = await import('./self-improvement.js');
+    registerPlugin('self-improvement', {
+      category: 'reasoning',
+      capabilities: ['learning', 'error_analysis', 'feedback', 'optimization', 'goals'],
+      intents: [
+        /\b(learn|improve|get better)\b/i,
+        /\b(error|mistake|wrong|failed)\b/i,
+        /\b(feedback|rate|score)\b/i,
+        /\b(goal|target|objective)\b/i,
+        /\b(performance|metrics|stats)\b/i
+      ],
+      priority: 25,
+      handler: async (input, ctx) => {
+        if (/error|mistake|failed/i.test(input)) {
+          return selfImprove.analyzeErrors();
+        }
+        if (/feedback/i.test(input)) {
+          return selfImprove.learnFromFeedback();
+        }
+        if (/goal/i.test(input)) {
+          return selfImprove.reviewGoals();
+        }
+        if (/performance|metrics/i.test(input)) {
+          return selfImprove.getPerformanceStats();
+        }
+        return selfImprove.assessCapabilities();
+      },
+      module: selfImprove
+    });
+
+    // Creative Generation
+    const creative = await import('./creative-generation.js');
+    registerPlugin('creative-generation', {
+      category: 'execution',
+      capabilities: ['image_generation', 'speech', 'writing', 'story', 'poetry', 'ideas'],
+      intents: [
+        /\b(generate|create|make)\s+(an?\s+)?(image|picture|photo)\b/i,
+        /\b(dall-e|dalle|midjourney|stable diffusion)\b/i,
+        /\b(speak|say|voice|tts|text to speech)\b/i,
+        /\b(write|story|poem|poetry|creative)\b/i,
+        /\b(brainstorm|ideas?|name suggestions?)\b/i
+      ],
+      priority: 58,
+      handler: async (input, ctx) => {
+        if (/image|picture|photo|dall-e/i.test(input)) {
+          const prompt = input.replace(/.*(?:generate|create|make)\s+(?:an?\s+)?(?:image|picture)\s+(?:of\s+)?/i, '');
+          return creative.generateImageDallE(prompt);
+        }
+        if (/speak|say|voice|tts/i.test(input)) {
+          const text = input.replace(/.*(?:speak|say|voice)\s+/i, '');
+          return creative.generateSpeech(text);
+        }
+        if (/story/i.test(input)) {
+          return creative.generateStory(input);
+        }
+        if (/poem|poetry/i.test(input)) {
+          return creative.generatePoetry(input);
+        }
+        if (/brainstorm|ideas/i.test(input)) {
+          return creative.generateIdeas(input);
+        }
+        return creative.generateWriting(input);
+      },
+      module: creative
+    });
+
+    // Workflow Automation
+    const workflow = await import('./workflow-automation.js');
+    registerPlugin('workflow-automation', {
+      category: 'execution',
+      capabilities: ['workflow', 'pipeline', 'scheduling', 'automation', 'tasks'],
+      intents: [
+        /\b(workflow|pipeline|automate)\b/i,
+        /\b(schedule|cron|recurring|every)\b/i,
+        /\b(run|execute)\s+(?:the\s+)?pipeline\b/i,
+        /\b(task|step|sequence)\b/i
+      ],
+      priority: 52,
+      handler: async (input, ctx) => {
+        if (/schedule|cron|recurring/i.test(input)) {
+          return workflow.listScheduledTasks();
+        }
+        if (/run.*workflow/i.test(input)) {
+          const name = input.match(/run\s+(\w+)\s+workflow/i)?.[1];
+          if (name) return workflow.executeWorkflow(name);
+        }
+        if (/list.*workflow/i.test(input)) {
+          return workflow.listWorkflows();
+        }
+        return workflow.getStatus();
+      },
+      module: workflow
+    });
+
+    // Research Tools
+    const research = await import('./research-tools.js');
+    registerPlugin('research-tools', {
+      category: 'grounding',
+      capabilities: ['papers', 'citations', 'literature', 'hypothesis', 'methodology'],
+      intents: [
+        /\b(paper|papers|research|study|studies)\b/i,
+        /\b(citation|cite|reference)\b/i,
+        /\b(literature review|survey)\b/i,
+        /\b(hypothesis|research question)\b/i,
+        /\b(methodology|method|approach)\b/i
+      ],
+      priority: 64,
+      handler: async (input, ctx) => {
+        if (/search.*paper|find.*research/i.test(input)) {
+          return research.searchPapers(input);
+        }
+        if (/literature review/i.test(input)) {
+          return research.generateLiteratureReview(input, ctx.papers || []);
+        }
+        if (/hypothesis/i.test(input)) {
+          return research.generateHypotheses(input, ctx.context || '');
+        }
+        if (/methodology/i.test(input)) {
+          return research.designMethodology(input);
+        }
+        if (/gap|missing/i.test(input)) {
+          return research.identifyResearchGaps(input, ctx.research || []);
+        }
+        return research.searchPapers(input);
+      },
+      module: research
+    });
+
     console.log('[Orchestrator] All plugins initialized - Total:',
       Object.values(pluginRegistry).reduce((sum, cat) => sum + Object.keys(cat).length, 0));
 
   } catch (error) {
     console.error('[Orchestrator] Plugin init error:', error.message);
   }
+}
+
+// Helper function to extract code from input
+function extractCode(input) {
+  const match = input.match(/```[\s\S]*?```/);
+  if (match) {
+    return match[0].replace(/```\w*\n?/g, '').trim();
+  }
+  return input;
 }
 
 // Initialize on module load
