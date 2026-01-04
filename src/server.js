@@ -1840,11 +1840,76 @@ Examples:
 
       case 'EXECUTE_PLAN':
         // ================================================================
-        // SMART EXECUTION: Investigate → Analyze → Plan → Auto-Execute
+        // SMART EXECUTION: Plan → Investigate → Analyze → Auto-Execute
         // ================================================================
         try {
           const task = intent.params.task || query;
-          let response = `🔍 *Investigating: ${task}*\n\n`;
+          let response = '';
+
+          // ========== PHASE 0: HIERARCHICAL PLANNING ==========
+          // For complex multi-step tasks, decompose into sub-tasks first
+          const taskComplexity = reasoning.assessComplexity(task);
+          console.log(`[EXECUTE_PLAN] Task complexity: ${taskComplexity.level}`);
+
+          let executionPlan = null;
+          if (taskComplexity.level === 'high' || task.toLowerCase().includes('migrate') ||
+              task.toLowerCase().includes('refactor') || task.toLowerCase().includes('implement')) {
+            response += `📋 *Creating Execution Plan...*\n\n`;
+            try {
+              executionPlan = await planner.createExecutionPlan(task, {
+                context: { masterContext: await context.getContextSummary() }
+              });
+
+              if (executionPlan.tasks && executionPlan.tasks.length > 0) {
+                response += `*📝 Hierarchical Plan:*\n`;
+                for (const t of executionPlan.tasks.slice(0, 8)) {
+                  const icon = t.type === 'action' ? '🔧' : t.type === 'research' ? '🔍' : '📌';
+                  response += `${icon} ${t.name} (${t.estimatedMinutes || '?'}min)\n`;
+                }
+                if (executionPlan.timeline) {
+                  response += `\n⏱️ *Estimated:* ${executionPlan.timeline.totalHours}h\n`;
+                }
+                response += `\n`;
+
+                // Save plan for tracking
+                const saved = await planner.savePlan(executionPlan);
+                response += `📌 Plan saved: \`${saved.planId}\`\n\n`;
+              }
+            } catch (e) {
+              console.log('[EXECUTE_PLAN] Planning failed, continuing with investigation:', e.message);
+            }
+          }
+
+          response += `🔍 *Investigating: ${task}*\n\n`;
+
+          // ========== PHASE 0.5: ERROR PREDICTION (Self-Reflection) ==========
+          // Predict potential errors based on past patterns
+          const taskTypeForReflection = task.toLowerCase().includes('fix') ? 'code_fix' :
+            task.toLowerCase().includes('deploy') ? 'deploy' :
+            task.toLowerCase().includes('migrate') ? 'migration' : 'general';
+
+          try {
+            const errorPredictions = await reflection.predictErrors(taskTypeForReflection, task);
+            if (errorPredictions && errorPredictions.length > 0) {
+              response += `⚠️ *Known Risks (from past learning):*\n`;
+              for (const pred of errorPredictions.slice(0, 3)) {
+                response += `• ${pred.risk.toUpperCase()}: ${pred.prevention}\n`;
+              }
+              response += `\n`;
+            }
+
+            // Also get applicable lessons
+            const lessons = await reflection.getApplicableLessons(taskTypeForReflection, task);
+            if (lessons && lessons.length > 0) {
+              response += `💡 *Lessons learned:*\n`;
+              for (const lesson of lessons.slice(0, 2)) {
+                response += `• ${lesson.lesson} (${(lesson.confidence * 100).toFixed(0)}% confident)\n`;
+              }
+              response += `\n`;
+            }
+          } catch (e) {
+            console.log('[Reflection] Prediction failed:', e.message);
+          }
 
           // ========== PHASE 1: INVESTIGATION ==========
           // Determine which repo and files are relevant
@@ -2077,6 +2142,25 @@ Return JSON:
           const planSummary = `Investigated ${targetRepo}: ${analysis.diagnosis}. Fixes: ${(analysis.fixes || []).map(f => f.description).join('; ')}`;
           await memory.store(`last_response_${userId}`, planSummary.substring(0, 1500), 'context');
 
+          // ========== PHASE 5: SELF-REFLECTION (Record Outcome for Learning) ==========
+          try {
+            const fixesApplied = analysis.fixes?.filter(f => f.safe || forceMode).length || 0;
+            const outcome = fixesApplied > 0 ? 'success' : (analysis.fixes?.length > 0 ? 'partial' : 'failure');
+
+            await reflection.recordTaskOutcome({
+              taskId: `exec_${Date.now()}`,
+              taskType: taskTypeForReflection,
+              context: task,
+              action: planSummary.substring(0, 500),
+              outcome,
+              errorMessage: outcome === 'failure' ? 'No fixes could be applied' : null,
+              tags: [targetRepo, taskTypeForReflection]
+            });
+            console.log(`[Reflection] Recorded ${outcome} outcome for ${taskTypeForReflection}`);
+          } catch (e) {
+            console.log('[Reflection] Failed to record outcome:', e.message);
+          }
+
           // Ensure response isn't too long for Slack (keep confirmation visible)
           const maxLen = 2500;
           if (response.length > maxLen) {
@@ -2218,16 +2302,40 @@ Return JSON:
           ? `${contextForAI}=== USER'S QUESTION ===\n${intent.params.question}\n\nIMPORTANT: Use the context above to answer. You have full access to our conversation history and project knowledge.`
           : intent.params.question;
 
-        const askResults = await ai.askAll(enrichedQuestion, 'general');
-        const consensus = await ai.buildConsensus(askResults, 'weighted');
+        // =========================================================================
+        // INTELLIGENT REASONING (Chain-of-Thought / Ensemble / Specialist)
+        // =========================================================================
+        const complexity = reasoning.assessComplexity(enrichedQuestion);
+        console.log(`[ASK_AI] Complexity: ${complexity.level} (score: ${complexity.score}), approach: ${complexity.recommendedApproach}`);
+
+        let finalResponse, responseSource;
+
+        if (complexity.level === 'high') {
+          // High complexity: Use full reasoning orchestra (chain-of-thought or debate)
+          console.log('[ASK_AI] Using advanced reasoning for complex query');
+          const reasoningResult = await reasoning.reason(enrichedQuestion, { verbose: false });
+          finalResponse = reasoningResult.finalAnswer || reasoningResult.answer;
+          responseSource = `${reasoningResult.approach} (${reasoningResult.models?.join(', ') || 'multi-model'})`;
+        } else if (complexity.level === 'medium') {
+          // Medium complexity: Use specialist routing
+          const specialistResult = await reasoning.specialistQuery(enrichedQuestion);
+          finalResponse = specialistResult.answer;
+          responseSource = `${specialistResult.model} specialist`;
+        } else {
+          // Low complexity: Use standard consensus
+          const askResults = await ai.askAll(enrichedQuestion, 'general');
+          const consensus = await ai.buildConsensus(askResults, 'weighted');
+          finalResponse = consensus.response;
+          responseSource = consensus.sources?.join(', ') || consensus.winner;
+        }
 
         // Store this response for future context
-        const aiResponse = consensus.response.substring(0, 500);
+        const aiResponse = (finalResponse || '').substring(0, 500);
         await memory.store(`last_response_${userId}`, aiResponse, 'context');
 
         return { master: {
-          response: `🤖 *AI Consensus:*\n${consensus.response}\n\n` +
-            `_Sources: ${consensus.sources?.join(', ') || consensus.winner}_`
+          response: `🤖 *AI Response:*\n${finalResponse}\n\n` +
+            `_Source: ${responseSource} | Complexity: ${complexity.level}_`
         }};
 
       case 'REVIEW':
