@@ -21,6 +21,20 @@ import * as neo4j from './neo4j.js';
  * Analyze sentiment of text
  */
 export async function analyzeSentiment(text) {
+  // Handle missing or invalid text
+  if (!text || typeof text !== 'string') {
+    return {
+      text: '',
+      sentiment: 'neutral',
+      score: 0,
+      confidence: 0,
+      emotions: [],
+      urgency: 'low',
+      method: 'fallback',
+      error: 'No text provided'
+    };
+  }
+
   // Quick rule-based pre-check for obvious cases
   const quickResult = quickSentimentCheck(text);
   if (quickResult.confidence > 0.9) {
@@ -99,6 +113,10 @@ function quickSentimentCheck(text) {
  * Detect specific emotions in text
  */
 export async function detectEmotions(text) {
+  if (!text || typeof text !== 'string') {
+    return { text: '', emotions: [], dominantEmotion: null, error: 'No text provided' };
+  }
+
   const prompt = `Detect emotions in this text. Return JSON array of emotions with intensities:
 
 Text: "${text.substring(0, 500)}"
