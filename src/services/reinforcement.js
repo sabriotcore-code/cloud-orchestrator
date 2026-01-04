@@ -57,7 +57,7 @@ async function ensureSchema() {
 
     // A/B experiments
     await db.query(`
-      CREATE TABLE IF NOT EXISTS ab_experiments (
+      CREATE TABLE IF NOT EXISTS rl_ab_experiments (
         id SERIAL PRIMARY KEY,
         experiment_name VARCHAR(100),
         variant_a TEXT, -- JSON config
@@ -312,7 +312,7 @@ export async function createExperiment(name, variantA, variantB) {
   await ensureSchema();
 
   const result = await db.query(`
-    INSERT INTO ab_experiments (experiment_name, variant_a, variant_b)
+    INSERT INTO rl_ab_experiments (experiment_name, variant_a, variant_b)
     VALUES ($1, $2, $3)
     RETURNING *
   `, [name, JSON.stringify(variantA), JSON.stringify(variantB)]);
@@ -327,7 +327,7 @@ export async function getExperimentVariant(experimentName) {
   await ensureSchema();
 
   const exp = await db.query(`
-    SELECT * FROM ab_experiments
+    SELECT * FROM rl_ab_experiments
     WHERE experiment_name = $1 AND status = 'running'
   `, [experimentName]);
 
@@ -415,14 +415,14 @@ export async function recordExperimentResult(experimentId, variant, success) {
 
   if (variant === 'a') {
     await db.query(`
-      UPDATE ab_experiments
+      UPDATE rl_ab_experiments
       SET variant_a_trials = variant_a_trials + 1,
           variant_a_successes = variant_a_successes + $2
       WHERE id = $1
     `, [experimentId, success ? 1 : 0]);
   } else {
     await db.query(`
-      UPDATE ab_experiments
+      UPDATE rl_ab_experiments
       SET variant_b_trials = variant_b_trials + 1,
           variant_b_successes = variant_b_successes + $2
       WHERE id = $1
@@ -438,7 +438,7 @@ export async function recordExperimentResult(experimentId, variant, success) {
  */
 async function checkExperimentConclusion(experimentId) {
   const exp = await db.query(`
-    SELECT * FROM ab_experiments WHERE id = $1
+    SELECT * FROM rl_ab_experiments WHERE id = $1
   `, [experimentId]);
 
   if (exp.rows.length === 0) return;
@@ -461,7 +461,7 @@ async function checkExperimentConclusion(experimentId) {
     const winner = rateA > rateB ? 'a' : 'b';
 
     await db.query(`
-      UPDATE ab_experiments
+      UPDATE rl_ab_experiments
       SET status = 'concluded', winner = $2, concluded_at = NOW()
       WHERE id = $1
     `, [experimentId, winner]);
@@ -657,7 +657,7 @@ export async function getReinforcementStats() {
   // Active experiments
   const experiments = await db.query(`
     SELECT experiment_name, variant_a_trials, variant_b_trials, status, winner
-    FROM ab_experiments
+    FROM rl_ab_experiments
     ORDER BY started_at DESC
     LIMIT 5
   `);

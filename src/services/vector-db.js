@@ -47,6 +47,11 @@ class LRUCache {
   entries() {
     return Array.from(this.cache.entries()).map(([k, v]) => [k, v.value]);
   }
+
+  // For namespace iteration
+  keys() {
+    return this.cache.keys();
+  }
 }
 
 // ============================================================================
