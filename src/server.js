@@ -74,6 +74,9 @@ import * as perplexity from './services/perplexity.js';
 import * as multiSourceVerify from './services/multi-source-verify.js';
 import * as codeSandbox from './services/code-sandbox.js';
 
+// Unified Cognitive Orchestrator - AUTO-ROUTES ALL SYSTEMS
+import * as cognitiveOrchestrator from './services/cognitive-orchestrator.js';
+
 import {
   usernameToId,
   extractJson,
@@ -5023,6 +5026,92 @@ app.post('/cognitive/sandbox/test', async (req, res) => {
 app.get('/cognitive/sandbox/status', (req, res) => res.json(codeSandbox.getStatus()));
 app.get('/cognitive/sandbox/history', (req, res) => res.json(codeSandbox.getExecutionHistory(parseInt(req.query.limit) || 50)));
 app.get('/cognitive/sandbox/stats', (req, res) => res.json(codeSandbox.getExecutionStats()));
+
+// ============================================================================
+// UNIFIED COGNITIVE ORCHESTRATOR - SINGLE ENTRY POINT
+// Automatically routes to all registered systems based on input
+// ============================================================================
+
+/**
+ * POST /think - The unified entry point
+ * Send any natural language input, and it automatically:
+ * - Detects intent (code, search, verify, analyze, etc.)
+ * - Routes to appropriate systems (Perplexity, Code Sandbox, CrewAI, etc.)
+ * - Combines results from multiple systems
+ * - Returns a unified response
+ */
+app.post('/think', async (req, res) => {
+  try {
+    const { input, userId, verbose } = req.body;
+    if (!input) return res.status(400).json({ error: 'input required' });
+
+    const result = await cognitiveOrchestrator.think(input, { userId, verbose });
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Quick grounded answer (web search + AI synthesis)
+app.post('/think/grounded', async (req, res) => {
+  try {
+    const { input, userId } = req.body;
+    if (!input) return res.status(400).json({ error: 'input required' });
+
+    const result = await cognitiveOrchestrator.groundedThink(input, { userId });
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Quick verified answer (multi-source verification)
+app.post('/think/verified', async (req, res) => {
+  try {
+    const { claim, userId } = req.body;
+    if (!claim) return res.status(400).json({ error: 'claim required' });
+
+    const result = await cognitiveOrchestrator.verifiedThink(claim, { userId });
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Quick code generation + execution
+app.post('/think/code', async (req, res) => {
+  try {
+    const { description, language, userId } = req.body;
+    if (!description) return res.status(400).json({ error: 'description required' });
+
+    const result = await cognitiveOrchestrator.codeThink(description, language, { userId });
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Deep analysis with multi-agent collaboration
+app.post('/think/deep', async (req, res) => {
+  try {
+    const { task, userId } = req.body;
+    if (!task) return res.status(400).json({ error: 'task required' });
+
+    const result = await cognitiveOrchestrator.deepThink(task, { userId });
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get orchestrator status (shows all registered plugins)
+app.get('/think/status', (req, res) => res.json(cognitiveOrchestrator.getStatus()));
+
+// Get all registered plugins
+app.get('/think/plugins', (req, res) => res.json(cognitiveOrchestrator.getRegisteredPlugins()));
+
+// Get all available capabilities
+app.get('/think/capabilities', (req, res) => res.json(cognitiveOrchestrator.getCapabilities()));
 
 // --- COGNITIVE ARCHITECTURE STATUS ---
 app.get('/cognitive/status', (req, res) => {
