@@ -63,13 +63,11 @@ export async function multiSourceRetrieve(query, options = {}) {
 
   const promises = [];
 
-  // Pinecone/Vector DB
+  // Pinecone/Vector DB - skip for now (requires embeddings pipeline)
+  // Use the MCP pinecone-context server directly for text search instead
   if (sources.includes('pinecone')) {
-    promises.push(
-      vectorDb.search(query, topK)
-        .then(r => ({ source: 'pinecone', results: r || [] }))
-        .catch(() => ({ source: 'pinecone', results: [] }))
-    );
+    // Placeholder - returns empty, use memory/conversations instead
+    promises.push(Promise.resolve({ source: 'pinecone', results: [], note: 'Use MCP pinecone_search for text queries' }));
   }
 
   // Database memory
